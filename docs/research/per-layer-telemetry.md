@@ -44,7 +44,7 @@ No `.npz` traces, no `NRTRACE1`/route-trace `.bin` anywhere in the tree — only
 
 ## 5. Build and run (needed to measure a code change)
 
-No build tree exists in the repo today (no `build/`, no `build-windows/`); the running engine is the Nix binary `…/bin/infernix-serve`. C++ tests: `cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release`, `cmake --build build -j`, `ctest --test-dir build --output-on-failure` (or `cmake --preset dev` / `ctest --preset dev`). Python: `python3 tests/test_expert_cache_host_tier.py`. Model artifacts exist under `/home/kido/ai/models/infernix/`; the serve flags come from outside this repo (`/home/kido/network/projects/nixos-configs/users/kido/llm.nix`).
+No build tree exists in the repo today (no `build/`, no `build-windows/`); the running engine is the Nix binary `…/bin/infernix-serve`. Build and test inside the **FrInfer dev harness**, `nix develop /home/kido/network/projects/frinfer`: CUDA 13.1 (`nvcc`, `cudart`, `nsight_compute`, `nsight_systems`), `cmake`, `ninja`, `just`, `pkg-config`, ffmpeg, and Python 3.13 with numpy/pytest/jinja2. Its `shellHook` prepends `/run/opengl-driver/lib` to `LD_LIBRARY_PATH` so `libcuda.so.1` is found; the first entry builds the nsight packages from source (later entries are cached). Infernix has no flake of its own. C++ tests: `cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release`, `cmake --build build -j`, `ctest --test-dir build --output-on-failure` (or `cmake --preset dev` / `ctest --preset dev`). Python: `python3 tests/test_expert_cache_host_tier.py`. Model artifacts exist under `/home/kido/ai/models/infernix/`; the serve flags come from outside this repo (`/home/kido/network/projects/nixos-configs/users/kido/llm.nix`).
 
 ## Consequences for the map
 
