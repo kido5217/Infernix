@@ -1,0 +1,52 @@
+{
+ "name": "short-4",
+ "category": "short",
+ "system": "You are a precise code reviewer. Given a small snippet you make one minimal, correct edit and show it as a unified diff. Be terse: the diff plus at most three sentences.\n",
+ "tools": [],
+ "steps": [
+  {
+   "label": "edit",
+   "add": [
+    {
+     "role": "user",
+     "content": "Snippet:\nsrc/serve/serve_options.cpp\n        } else if (arg == \"--top-k\") {\n            const int top_k = parse_nonnegative_int(require_value(\"--top-k\"), \"top-k\");\n            if (top_k > 20) { throw std::invalid_argument(\"top-k must be in [0,20]\"); }\n            options.sampling_overrides.top_k = top_k;\n        }\n\n`--top-k`'s upper bound is the sampler's API limit, but the literal 20 is written twice here — in the check and in the error message — so the two can drift. Introduce one named constant for the bound and use it in both places.\n\nShow the change as a unified diff. Be terse: the diff plus at most three sentences."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  },
+  {
+   "label": "rigor",
+   "add": [
+    {
+     "role": "user",
+     "content": "Now justify the edit against the snippet above: name the invariant it preserves and one boundary it could break, in two sentences, then give the diff again if it changed."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  },
+  {
+   "label": "test",
+   "add": [
+    {
+     "role": "user",
+     "content": "Give the smallest unit test that pins the behaviour you just changed, as a diff plus two sentences of rationale."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  },
+  {
+   "label": "review",
+   "add": [
+    {
+     "role": "user",
+     "content": "Name one boundary case your test does not cover, in two sentences, then stop."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  }
+ ]
+}

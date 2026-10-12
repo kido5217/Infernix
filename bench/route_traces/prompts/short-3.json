@@ -1,0 +1,52 @@
+{
+ "name": "short-3",
+ "category": "short",
+ "system": "You are a precise code reviewer. Given a small snippet you make one minimal, correct edit and show it as a unified diff. Be terse: the diff plus at most three sentences.\n",
+ "tools": [],
+ "steps": [
+  {
+   "label": "edit",
+   "add": [
+    {
+     "role": "user",
+     "content": "Snippet:\nsrc/models/qwen4_exp/memory_plan.cpp\nstd::uint64_t internal_reserve(std::uint32_t graphs, std::uint64_t graph_bytes, bool elastic) {\n    const std::uint64_t counted = elastic ? std::min<std::uint32_t>(graphs, 32) : graphs;\n    return std::max(256 * kLedgerMiB, 128 * kLedgerMiB + graph_bytes * counted);\n}\n\nThe elastic branch caps the counted CUDA-graph ledgers at the bare literal 32, which is why the reserve saturates. Give that cap a named constant, use it here, and say in one sentence what the cap protects against.\n\nShow the change as a unified diff. Be terse: the diff plus at most three sentences."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  },
+  {
+   "label": "rigor",
+   "add": [
+    {
+     "role": "user",
+     "content": "Now justify the edit against the snippet above: name the invariant it preserves and one boundary it could break, in two sentences, then give the diff again if it changed."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  },
+  {
+   "label": "test",
+   "add": [
+    {
+     "role": "user",
+     "content": "Give the smallest unit test that pins the behaviour you just changed, as a diff plus two sentences of rationale."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  },
+  {
+   "label": "review",
+   "add": [
+    {
+     "role": "user",
+     "content": "Name one boundary case your test does not cover, in two sentences, then stop."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  }
+ ]
+}

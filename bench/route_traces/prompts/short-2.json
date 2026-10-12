@@ -1,0 +1,52 @@
+{
+ "name": "short-2",
+ "category": "short",
+ "system": "You are a precise code reviewer. Given a small snippet you make one minimal, correct edit and show it as a unified diff. Be terse: the diff plus at most three sentences.\n",
+ "tools": [],
+ "steps": [
+  {
+   "label": "edit",
+   "add": [
+    {
+     "role": "user",
+     "content": "Snippet:\nsrc/models/qwen4_exp/program/route_trace.cpp\nconstexpr std::uint32_t kVersion = 2;\n// ...\n    std::array<std::uint32_t, 16> header{};\n    std::memcpy(header.data(), \"NRTRACE1\", 8);\n    header[2]  = kVersion;\n    header[3]  = setup.layers;\n    header[4]  = setup.experts;\n    header[5]  = setup.top_k;\n    header[6]  = setup.frames;\n    header[7]  = setup.max_columns;\n    // ... header[8..12] similar ...\n    header[12] = setup.prefill_chunk;\n    write(header.data(), sizeof(header));\n\nroute_trace.h documents a fixed 64-byte header of sixteen little-endian u32 words, but this source spells that count only as the bare literal 16. Give the header's size one named constant, size the array from it, and add a static_assert tying it to the documented 64 bytes so a future field cannot silently change the format.\n\nShow the change as a unified diff. Be terse: the diff plus at most three sentences."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  },
+  {
+   "label": "rigor",
+   "add": [
+    {
+     "role": "user",
+     "content": "Now justify the edit against the snippet above: name the invariant it preserves and one boundary it could break, in two sentences, then give the diff again if it changed."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  },
+  {
+   "label": "test",
+   "add": [
+    {
+     "role": "user",
+     "content": "Give the smallest unit test that pins the behaviour you just changed, as a diff plus two sentences of rationale."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  },
+  {
+   "label": "review",
+   "add": [
+    {
+     "role": "user",
+     "content": "Name one boundary case your test does not cover, in two sentences, then stop."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  }
+ ]
+}
