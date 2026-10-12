@@ -10,14 +10,14 @@ Research note for wayfinder ticket #9 (map #7). Findings read from the tree on 2
 | Per-request stats | `include/infernix/types.h:1214-1218` (`ExpertCacheStats`) | `{routed, hits}` only |
 | Request report line | `program_impl.h:2427`, emitted `2442-2450`, `DiagnosticLevel::Debug` | `"expert cache: %u frames; request %.1f%% of %llu routed experts hit, %llu promotions, %llu landed, %llu misses CPU-served; since start %.1f%%; VRAM free %zu MiB"` |
 | SSD tier | `program_impl.h:2455-2467`, Debug | `"SSD expert tier: request %llu expert reads … admitted to RAM … demoted from VRAM"` |
-| Lane cost | `program_impl.h:2478` (`report_lane_cost`), line `2508`, Debug | per-round lane timing |
+| Lane cost | `program_impl.h:2483` (`report_lane_cost`; diagnostic call `2512`), Debug | per-round lane timing |
 | Warm start | `program_impl.h:2301`, `2303` | seed/landing of saved state |
 | Serve pretty line | `src/serve/operational_log.cpp:300` | `expert cache <pct>%` |
 | Console aggregate | `src/serve/console_stats.cpp:114`, `162-163` | cumulative hit-rate column |
 
 **Enablement.** `DiagnosticLevel::Debug` maps to `logger->debug` (`src/runtime/.../engine_diagnostics.cpp:16-18`), so `--log-level debug|trace` surfaces these lines. **There is no `--debug` flag**, and without an attached observer Debug records are dropped (`qwen4_exp_instance.cpp:61`, `diagnostics.h:33`). `--request-log-jsonl` carries **no expert-cache fields at all** (`src/serve/request_log.cpp`).
 
-**The gap this ticket exists to name:** per-layer miss counts are **not** logged. There is no route-log dump from the engine process (the route log stays on the host in `route_host_`, consumed at `expert_residency.cpp:432`), no per-layer histogram, and the shadow-replay / parameter-switching mechanism of design §9.3 item 5 and §9.4 is **design-only, not implemented**.
+**The gap this ticket exists to name:** per-layer miss counts are **not** logged (the counters are per-request and per-tier only). A per-round **route trace** — the per-layer routed ids the replay harness wants — *is* implemented and wired: `RouteTrace` writes the `NRTRACE1` format (`src/models/qwen4_exp/program/route_trace.cpp:32-39` header, `append()` `:64-88` writing `i32 routes[layers][top_k*columns]` per round), reached through the process-wide seam `testing::set_route_trace` (`route_trace.h:96`, `route_trace.cpp:105`), read into options at `src/runtime/engine/qwen4_exp_instance.cpp:213`, constructed when `options_.route_trace` is non-empty (`program_impl.h:920`), and covered by `tests/models/qwen4_exp/test_route_trace_real.cpp:154,158`. What is missing is only an **exposure**: no serve/CLI/product option sets the path (`git grep route_trace -- src/serve src/product include` is empty), so it is reachable today only from in-process tests. There is no per-layer histogram, and the shadow-replay / parameter-switching mechanism of design §9.3 item 5 and §9.4 is **design-only, not implemented**. The policy's own route log stays host-side in `route_host_` (consumed `expert_residency.cpp:432`); the trace is a separate, opt-in dump.
 
 ## 2. The replay harness
 
@@ -48,6 +48,6 @@ No build tree exists in the repo today (no `build/`, no `build-windows/`); the r
 
 ## Consequences for the map
 
-1. The recording ticket must include *adding* the per-round route-trace emit path — it does not exist — plus configuring a local build tree.
+1. The recording ticket's first step is **exposing the existing `RouteTrace` writer** through a serve/CLI option (it is wired and covered by tests but unreachable outside tests) — not building an emit path — plus configuring a local build tree.
 2. The live A/B likewise needs the local build; the two arms differ by a temporary toggle.
 3. A live result cannot today be explained layer by layer: only request aggregates exist. Either the trace is recorded during the A/B (preferred) or per-layer counters are added with the instrumentation.
