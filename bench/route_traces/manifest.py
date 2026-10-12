@@ -41,6 +41,8 @@ def validate_verdict(name):
 
 def main():
     results = json.load(open(os.path.join(OUT, "results.json"), encoding="utf-8"))
+    decode_settings = next(
+        (r.get("decode_settings") for r in (results[n] for n in sorted(results)) if "error" not in r), None)
     entries = []
     for name in sorted(results, key=lambda n: (results[n].get("category", "?"), n)):
         result = results[name]
@@ -60,6 +62,7 @@ def main():
             "trace_path": result["trace_path"],
             "trace_sha256": result["trace_sha256"],
             "trace_bytes": result["trace_bytes"],
+            "decode_settings": result.get("decode_settings", decode_settings),
             "trace_version": trace.header["version"],
             "trace_header_frames": trace.header["frames"],
             "rounds": len(trace.rounds),
@@ -75,7 +78,9 @@ def main():
         entries.append(entry)
     manifest = {
         "protocol": "wayfinder #11; floors long>=1024 / short>=256 generated tokens "
-                    "(Decode+Verify+Forced rounds); 4 long (>=32K-token prompt) + 4 short (<=2K-token)",
+                    "(Decode+Verify+Forced rounds); 4 long (>=32K-token prompt) + 4 short (<=2K-token, "
+                    "3-5-turn); greedy decoding (protocol rev 5 \u00a73) and eight distinct sessions",
+        "decode_settings": decode_settings,
         "artifact": "/home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix",
         "ngram_volume": "/home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram",
         "sessions": entries,

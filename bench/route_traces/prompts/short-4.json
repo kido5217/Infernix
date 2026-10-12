@@ -5,11 +5,11 @@
  "tools": [],
  "steps": [
   {
-   "label": "fix",
+   "label": "edit",
    "add": [
     {
      "role": "user",
-     "content": "Snippet:\nsrc/models/qwen4_exp/program/expert_residency.h\n    [[nodiscard]] std::uint32_t frames() const noexcept { return frames_; }\n    [[nodiscard]] std::uint32_t frame_limit() const noexcept { return limit_; }\n    [[nodiscard]] bool elastic() const noexcept { return arena_ != nullptr; }\nThis is the expert pool's frame-count surface. Add one accessor that returns the bytes the frames occupy now, keeping the four existing accessors unchanged. Show a unified diff and at most three sentences of rationale."
+     "content": "Snippet:\nsrc/serve/serve_options.cpp\n        } else if (arg == \"--top-k\") {\n            const int top_k = parse_nonnegative_int(require_value(\"--top-k\"), \"top-k\");\n            if (top_k > 20) { throw std::invalid_argument(\"top-k must be in [0,20]\"); }\n            options.sampling_overrides.top_k = top_k;\n        }\n\n`--top-k`'s upper bound is the sampler's API limit, but the literal 20 is written twice here — in the check and in the error message — so the two can drift. Introduce one named constant for the bound and use it in both places.\n\nShow the change as a unified diff. Be terse: the diff plus at most three sentences."
     }
    ],
    "max_tokens": 400,
@@ -20,7 +20,7 @@
    "add": [
     {
      "role": "user",
-     "content": "Now make `frame_limit()` constexpr-correct and explain in two sentences why the change is or is not a behavior change."
+     "content": "Now justify the edit against the snippet above: name the invariant it preserves and one boundary it could break, in two sentences, then give the diff again if it changed."
     }
    ],
    "max_tokens": 400,
@@ -31,7 +31,7 @@
    "add": [
     {
      "role": "user",
-     "content": "Give the smallest unit test that pins `frames()` and the new accessor on an empty pool, as a diff plus two sentences."
+     "content": "Give the smallest unit test that pins the behaviour you just changed, as a diff plus two sentences of rationale."
     }
    ],
    "max_tokens": 400,

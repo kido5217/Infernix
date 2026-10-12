@@ -1,5 +1,17 @@
 {
- "protocol": "wayfinder #11; floors long>=1024 / short>=256 generated tokens (Decode+Verify+Forced rounds); 4 long (>=32K-token prompt) + 4 short (<=2K-token)",
+ "protocol": "wayfinder #11; floors long>=1024 / short>=256 generated tokens (Decode+Verify+Forced rounds); 4 long (>=32K-token prompt) + 4 short (<=2K-token, 3-5-turn); greedy decoding (protocol rev 5 \u00a73) and eight distinct sessions",
+ "decode_settings": {
+  "mode": "greedy",
+  "note": "exact argmax; no sampling (temperature 0, no top-p/top-k truncation requested)",
+  "request": {
+   "min_p": null,
+   "seed": null,
+   "temperature": 0.0,
+   "top_k": null,
+   "top_p": 1.0
+  },
+  "serve_flag": "--greedy"
+ },
  "artifact": "/home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix",
  "ngram_volume": "/home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram",
  "sessions": [
@@ -8,53 +20,65 @@
    "category": "long",
    "prompt_file": "bench/route_traces/prompts/long-1.json",
    "prompt_sha256": "5dc819bda6687811f45f03d961091c1aaf78a480476758c9c473125ea967981b",
-   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8828 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/long-1.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/long-1.jsonl",
+   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8899 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --greedy --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/long-1.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/long-1.jsonl",
    "trace_path": "out/route-traces/long-1.bin",
-   "trace_sha256": "73609a0b037cdf7b77747a07aaddede3692009026268ea0f51d38225ad1d6481",
-   "trace_bytes": 17456624,
+   "trace_sha256": "38ab20834264a36b8f854d4822241a4959af9ca4ae42740cd07f9ef786660017",
+   "trace_bytes": 14700620,
+   "decode_settings": {
+    "mode": "greedy",
+    "note": "exact argmax; no sampling (temperature 0, no top-p/top-k truncation requested)",
+    "request": {
+     "min_p": null,
+     "seed": null,
+     "temperature": 0.0,
+     "top_k": null,
+     "top_p": 1.0
+    },
+    "serve_flag": "--greedy"
+   },
    "trace_version": 2,
-   "trace_header_frames": 8221,
-   "rounds": 3242,
-   "generated_tokens": 5713,
+   "trace_header_frames": 8178,
+   "rounds": 2310,
+   "generated_tokens": 4504,
    "generated_tokens_floor": 1024,
    "qualifies": true,
-   "max_prompt_tokens": 42756,
-   "completion_tokens_usage": 5711,
+   "max_prompt_tokens": 42772,
+   "completion_tokens_usage": 4502,
    "steps": [
     {
-     "completion_tokens": 443,
+     "completion_tokens": 415,
      "finish_reason": "tool_calls",
      "label": "read",
      "prompt_tokens": 42585,
-     "wall_seconds": 48.19
+     "wall_seconds": 45.43
     },
     {
-     "completion_tokens": 1028,
+     "completion_tokens": 802,
      "finish_reason": "tool_calls",
      "label": "edit",
-     "prompt_tokens": 42653,
-     "wall_seconds": 17.94
+     "prompt_tokens": 42669,
+     "wall_seconds": 13.1
     },
     {
      "completion_tokens": 3072,
      "finish_reason": "length",
      "label": "review",
-     "prompt_tokens": 42710,
-     "wall_seconds": 46.06
+     "prompt_tokens": 42726,
+     "wall_seconds": 42.86
     },
     {
-     "completion_tokens": 1168,
+     "completion_tokens": 213,
      "finish_reason": "tool_calls",
      "label": "test",
-     "prompt_tokens": 42756,
-     "wall_seconds": 17.92
+     "prompt_tokens": 42772,
+     "wall_seconds": 3.94
     }
    ],
-   "engine_cache_line": "2026-10-12 23:43:44.335  DEBUG engine | expert cache: 8122 frames; request 90.9% of 496790 routed experts hit, 7429 promotions, 0 landed, 30922 misses CPU-served; since start 88.0%; VRAM free 843 MiB",
+   "engine_cache_line": "2026-10-13 00:42:58.508  DEBUG engine | expert cache: 8117 frames; request 79.2% of 95671 routed experts hit, 2012 promotions, 0 landed, 12067 misses CPU-served; since start 86.8%; VRAM free 746 MiB",
    "validate": [
-    "traces: 1, 3242 rounds; 48 layers x 512 experts, top-10; captured with 8221 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
-    "full mode, 8221 frames, recorded budgets: VRAM hits 87.58 % of live routed experts (engine report: \"since start\" hit rate), 48801 promotions",
-    "per-round pool: 8122..8221 frames over 3242 rounds; mean 8145; token-weighted 8150"
+    "traces: 1, 2310 rounds; 48 layers x 512 experts, top-10; captured with 8178 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
+    "full mode, 8178 frames, recorded budgets: VRAM hits 86.17 % of live routed experts (engine report: \"since start\" hit rate), 43206 promotions",
+    "per-round pool: 8117..8178 frames over 2310 rounds; mean 8117; token-weighted 8118"
    ]
   },
   {
@@ -62,53 +86,65 @@
    "category": "long",
    "prompt_file": "bench/route_traces/prompts/long-2.json",
    "prompt_sha256": "4396ed3a409d082459db35f9fb2f243c43f24ddd00fea7246ab812be3deab025",
-   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8828 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/long-2.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/long-2.jsonl",
+   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8899 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --greedy --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/long-2.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/long-2.jsonl",
    "trace_path": "out/route-traces/long-2.bin",
-   "trace_sha256": "7a0973cbce971433b07055a8ee9ba0df8650d66b39b97eb2928b147a25eccda1",
-   "trace_bytes": 16971116,
+   "trace_sha256": "e37aa3cab6bc89417f33e29d2ced3642260fd0837b598563db27d3196bb9d7a2",
+   "trace_bytes": 15940832,
+   "decode_settings": {
+    "mode": "greedy",
+    "note": "exact argmax; no sampling (temperature 0, no top-p/top-k truncation requested)",
+    "request": {
+     "min_p": null,
+     "seed": null,
+     "temperature": 0.0,
+     "top_k": null,
+     "top_p": 1.0
+    },
+    "serve_flag": "--greedy"
+   },
    "trace_version": 2,
-   "trace_header_frames": 8221,
-   "rounds": 1087,
-   "generated_tokens": 2175,
+   "trace_header_frames": 8143,
+   "rounds": 817,
+   "generated_tokens": 1713,
    "generated_tokens_floor": 1024,
    "qualifies": true,
-   "max_prompt_tokens": 36573,
-   "completion_tokens_usage": 2172,
+   "max_prompt_tokens": 36616,
+   "completion_tokens_usage": 1710,
    "steps": [
     {
-     "completion_tokens": 258,
+     "completion_tokens": 275,
      "finish_reason": "tool_calls",
      "label": "read",
      "prompt_tokens": 36363,
-     "wall_seconds": 44.58
+     "wall_seconds": 42.23
     },
     {
-     "completion_tokens": 335,
+     "completion_tokens": 480,
      "finish_reason": "tool_calls",
      "label": "edit",
-     "prompt_tokens": 36451,
-     "wall_seconds": 6.74
+     "prompt_tokens": 36445,
+     "wall_seconds": 8.83
     },
     {
-     "completion_tokens": 754,
+     "completion_tokens": 494,
      "finish_reason": "tool_calls",
      "label": "review",
-     "prompt_tokens": 36527,
-     "wall_seconds": 10.89
+     "prompt_tokens": 36519,
+     "wall_seconds": 6.96
     },
     {
-     "completion_tokens": 825,
+     "completion_tokens": 461,
      "finish_reason": "tool_calls",
      "label": "test",
-     "prompt_tokens": 36573,
-     "wall_seconds": 11.9
+     "prompt_tokens": 36616,
+     "wall_seconds": 6.28
     }
    ],
-   "engine_cache_line": "2026-10-12 23:45:49.383  DEBUG engine | expert cache: 8146 frames; request 89.2% of 337523 routed experts hit, 6653 promotions, 0 landed, 25078 misses CPU-served; since start 84.3%; VRAM free 843 MiB",
+   "engine_cache_line": "2026-10-13 00:45:04.267  DEBUG engine | expert cache: 8070 frames; request 87.6% of 189567 routed experts hit, 4110 promotions, 0 landed, 16088 misses CPU-served; since start 82.7%; VRAM free 827 MiB",
    "validate": [
-    "traces: 1, 1087 rounds; 48 layers x 512 experts, top-10; captured with 8221 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
-    "full mode, 8221 frames, recorded budgets: VRAM hits 82.59 % of live routed experts (engine report: \"since start\" hit rate), 26023 promotions",
-    "per-round pool: 8146..8221 frames over 1087 rounds; mean 8161; token-weighted 8177"
+    "traces: 1, 817 rounds; 48 layers x 512 experts, top-10; captured with 8143 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
+    "full mode, 8143 frames, recorded budgets: VRAM hits 80.59 % of live routed experts (engine report: \"since start\" hit rate), 22430 promotions",
+    "per-round pool: 8070..8143 frames over 817 rounds; mean 8085; token-weighted 8100"
    ]
   },
   {
@@ -116,53 +152,65 @@
    "category": "long",
    "prompt_file": "bench/route_traces/prompts/long-3.json",
    "prompt_sha256": "be66b55163028ad149da3251b4e95a5f219440633e916406e3e05edbad6c13df",
-   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8828 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/long-3.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/long-3.jsonl",
+   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8899 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --greedy --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/long-3.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/long-3.jsonl",
    "trace_path": "out/route-traces/long-3.bin",
-   "trace_sha256": "870de86650d395c8122297e95d8d77dfc02557de0c41ee1e6f034752003db2af",
-   "trace_bytes": 12334288,
+   "trace_sha256": "ce5722cfc0285118e9fbb971a13edbf4d87b4e501968d2aee50589e477ff76be",
+   "trace_bytes": 12302392,
+   "decode_settings": {
+    "mode": "greedy",
+    "note": "exact argmax; no sampling (temperature 0, no top-p/top-k truncation requested)",
+    "request": {
+     "min_p": null,
+     "seed": null,
+     "temperature": 0.0,
+     "top_k": null,
+     "top_p": 1.0
+    },
+    "serve_flag": "--greedy"
+   },
    "trace_version": 2,
-   "trace_header_frames": 8221,
-   "rounds": 536,
-   "generated_tokens": 1078,
+   "trace_header_frames": 8142,
+   "rounds": 508,
+   "generated_tokens": 1126,
    "generated_tokens_floor": 1024,
    "qualifies": true,
-   "max_prompt_tokens": 48330,
-   "completion_tokens_usage": 1075,
+   "max_prompt_tokens": 48311,
+   "completion_tokens_usage": 1123,
    "steps": [
     {
-     "completion_tokens": 395,
+     "completion_tokens": 260,
      "finish_reason": "tool_calls",
      "label": "read",
      "prompt_tokens": 48104,
-     "wall_seconds": 54.18
+     "wall_seconds": 47.15
     },
     {
-     "completion_tokens": 132,
+     "completion_tokens": 321,
      "finish_reason": "tool_calls",
      "label": "edit",
-     "prompt_tokens": 48194,
-     "wall_seconds": 3.21
+     "prompt_tokens": 48195,
+     "wall_seconds": 5.8
     },
     {
-     "completion_tokens": 421,
+     "completion_tokens": 336,
      "finish_reason": "tool_calls",
      "label": "review",
-     "prompt_tokens": 48251,
-     "wall_seconds": 6.02
+     "prompt_tokens": 48265,
+     "wall_seconds": 4.33
     },
     {
-     "completion_tokens": 127,
+     "completion_tokens": 206,
      "finish_reason": "tool_calls",
      "label": "test",
-     "prompt_tokens": 48330,
-     "wall_seconds": 1.8
+     "prompt_tokens": 48311,
+     "wall_seconds": 2.6
     }
    ],
-   "engine_cache_line": "2026-10-12 23:47:45.837  DEBUG engine | expert cache: 8147 frames; request 88.5% of 60980 routed experts hit, 1034 promotions, 0 landed, 4490 misses CPU-served; since start 81.2%; VRAM free 779 MiB",
+   "engine_cache_line": "2026-10-13 00:46:57.414  DEBUG engine | expert cache: 8068 frames; request 88.0% of 83258 routed experts hit, 1915 promotions, 0 landed, 6794 misses CPU-served; since start 80.6%; VRAM free 764 MiB",
    "validate": [
-    "traces: 1, 536 rounds; 48 layers x 512 experts, top-10; captured with 8221 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
-    "full mode, 8221 frames, recorded budgets: VRAM hits 77.19 % of live routed experts (engine report: \"since start\" hit rate), 16195 promotions",
-    "per-round pool: 8147..8221 frames over 536 rounds; mean 8147; token-weighted 8148"
+    "traces: 1, 508 rounds; 48 layers x 512 experts, top-10; captured with 8142 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
+    "full mode, 8142 frames, recorded budgets: VRAM hits 77.13 % of live routed experts (engine report: \"since start\" hit rate), 17195 promotions",
+    "per-round pool: 8068..8142 frames over 508 rounds; mean 8068; token-weighted 8069"
    ]
   },
   {
@@ -170,269 +218,329 @@
    "category": "long",
    "prompt_file": "bench/route_traces/prompts/long-4.json",
    "prompt_sha256": "5dd29319d2c8f3ee84173403fe58271151f6c4bb353bb424bd1f007e4908db48",
-   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8828 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/long-4.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/long-4.jsonl",
+   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8899 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --greedy --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/long-4.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/long-4.jsonl",
    "trace_path": "out/route-traces/long-4.bin",
-   "trace_sha256": "588163fec89a93dc1ae5d3fa5fa068ba0b3b888a0a1ac2a88b2e7206140a4bed",
-   "trace_bytes": 23037336,
+   "trace_sha256": "73369dd7022ed734d105ac5ad09bbd247a2a4be4873f0c509bf892a90a66f354",
+   "trace_bytes": 16589692,
+   "decode_settings": {
+    "mode": "greedy",
+    "note": "exact argmax; no sampling (temperature 0, no top-p/top-k truncation requested)",
+    "request": {
+     "min_p": null,
+     "seed": null,
+     "temperature": 0.0,
+     "top_k": null,
+     "top_p": 1.0
+    },
+    "serve_flag": "--greedy"
+   },
    "trace_version": 2,
-   "trace_header_frames": 8221,
-   "rounds": 2586,
-   "generated_tokens": 4380,
+   "trace_header_frames": 8142,
+   "rounds": 754,
+   "generated_tokens": 1567,
    "generated_tokens_floor": 1024,
    "qualifies": true,
-   "max_prompt_tokens": 57318,
-   "completion_tokens_usage": 4377,
+   "max_prompt_tokens": 57355,
+   "completion_tokens_usage": 1565,
    "steps": [
     {
-     "completion_tokens": 1133,
+     "completion_tokens": 644,
      "finish_reason": "tool_calls",
      "label": "read",
      "prompt_tokens": 57085,
-     "wall_seconds": 57.31
+     "wall_seconds": 46.67
     },
     {
-     "completion_tokens": 481,
+     "completion_tokens": 164,
      "finish_reason": "tool_calls",
      "label": "edit",
-     "prompt_tokens": 57200,
-     "wall_seconds": 8.48
+     "prompt_tokens": 57195,
+     "wall_seconds": 4.04
     },
     {
-     "completion_tokens": 2421,
+     "completion_tokens": 565,
      "finish_reason": "tool_calls",
      "label": "review",
-     "prompt_tokens": 57272,
-     "wall_seconds": 38.87
+     "prompt_tokens": 57290,
+     "wall_seconds": 7.72
     },
     {
-     "completion_tokens": 342,
+     "completion_tokens": 192,
      "finish_reason": "tool_calls",
      "label": "test",
-     "prompt_tokens": 57318,
-     "wall_seconds": 5.43
+     "prompt_tokens": 57355,
+     "wall_seconds": 2.73
     }
    ],
-   "engine_cache_line": "2026-10-12 23:50:27.285  DEBUG engine | expert cache: 8093 frames; request 89.0% of 148503 routed experts hit, 2334 promotions, 0 landed, 11404 misses CPU-served; since start 88.0%; VRAM free 807 MiB",
+   "engine_cache_line": "2026-10-13 00:48:51.879  DEBUG engine | expert cache: 8006 frames; request 87.5% of 86606 routed experts hit, 1701 promotions, 0 landed, 7211 misses CPU-served; since start 82.0%; VRAM free 856 MiB",
    "validate": [
-    "traces: 1, 2586 rounds; 48 layers x 512 experts, top-10; captured with 8221 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
-    "full mode, 8221 frames, recorded budgets: VRAM hits 87.54 % of live routed experts (engine report: \"since start\" hit rate), 37176 promotions",
-    "per-round pool: 8093..8221 frames over 2586 rounds; mean 8095; token-weighted 8103"
+    "traces: 1, 754 rounds; 48 layers x 512 experts, top-10; captured with 8142 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
+    "full mode, 8142 frames, recorded budgets: VRAM hits 79.71 % of live routed experts (engine report: \"since start\" hit rate), 20008 promotions",
+    "per-round pool: 8006..8142 frames over 754 rounds; mean 8012; token-weighted 8023"
    ]
   },
   {
    "name": "short-1",
    "category": "short",
    "prompt_file": "bench/route_traces/prompts/short-1.json",
-   "prompt_sha256": "7940e9517a59518d844fcef7bc9eb126fd4c16ff0728ef08ef9347dc066a0ae9",
-   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8828 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/short-1.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/short-1.jsonl",
+   "prompt_sha256": "e6a0c0b153ebcc8b77ec19fc691065d04a9ada0294330d6cce687ba0e6e7e594",
+   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8899 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --greedy --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/short-1.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/short-1.jsonl",
    "trace_path": "out/route-traces/short-1.bin",
-   "trace_sha256": "4922c1055e4a9f5917a06d2dbc1d272831affb62c4c166386f1a653ee8605410",
-   "trace_bytes": 2151648,
+   "trace_sha256": "ee3a060f711ac7f295295f81bebdef3ed865574e8dd5667dee20b615dc005e62",
+   "trace_bytes": 2145952,
+   "decode_settings": {
+    "mode": "greedy",
+    "note": "exact argmax; no sampling (temperature 0, no top-p/top-k truncation requested)",
+    "request": {
+     "min_p": null,
+     "seed": null,
+     "temperature": 0.0,
+     "top_k": null,
+     "top_p": 1.0
+    },
+    "serve_flag": "--greedy"
+   },
    "trace_version": 2,
-   "trace_header_frames": 8221,
-   "rounds": 396,
-   "generated_tokens": 645,
+   "trace_header_frames": 8142,
+   "rounds": 249,
+   "generated_tokens": 566,
    "generated_tokens_floor": 256,
    "qualifies": true,
-   "max_prompt_tokens": 883,
-   "completion_tokens_usage": 645,
+   "max_prompt_tokens": 900,
+   "completion_tokens_usage": 564,
    "steps": [
     {
-     "completion_tokens": 400,
-     "finish_reason": "length",
-     "label": "fix",
-     "prompt_tokens": 172,
-     "wall_seconds": 9.17
+     "completion_tokens": 155,
+     "finish_reason": "stop",
+     "label": "edit",
+     "prompt_tokens": 279,
+     "wall_seconds": 3.81
     },
     {
-     "completion_tokens": 34,
+     "completion_tokens": 210,
      "finish_reason": "stop",
      "label": "rigor",
-     "prompt_tokens": 611,
-     "wall_seconds": 1.1
+     "prompt_tokens": 481,
+     "wall_seconds": 3.57
     },
     {
-     "completion_tokens": 169,
+     "completion_tokens": 144,
      "finish_reason": "stop",
      "label": "test",
-     "prompt_tokens": 684,
-     "wall_seconds": 3.63
+     "prompt_tokens": 726,
+     "wall_seconds": 3.38
     },
     {
-     "completion_tokens": 42,
+     "completion_tokens": 55,
      "finish_reason": "stop",
      "label": "review",
-     "prompt_tokens": 883,
-     "wall_seconds": 1.15
+     "prompt_tokens": 900,
+     "wall_seconds": 1.34
     }
    ],
-   "engine_cache_line": "2026-10-12 23:51:33.740  DEBUG engine | expert cache: 8221 frames; request 84.7% of 23151 routed experts hit, 328 promotions, 0 landed, 2266 misses CPU-served; since start 79.6%; VRAM free 727 MiB",
+   "engine_cache_line": "2026-10-13 00:49:56.847  DEBUG engine | expert cache: 8142 frames; request 75.5% of 26369 routed experts hit, 607 promotions, 0 landed, 3841 misses CPU-served; since start 69.4%; VRAM free 704 MiB",
    "validate": [
-    "traces: 1, 396 rounds; 48 layers x 512 experts, top-10; captured with 8221 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
-    "full mode, 8221 frames, recorded budgets: VRAM hits 72.10 % of live routed experts (engine report: \"since start\" hit rate), 12330 promotions",
-    "per-round pool: 8221..8221 frames over 396 rounds; mean 8221; token-weighted 8221"
+    "traces: 1, 249 rounds; 48 layers x 512 experts, top-10; captured with 8142 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
+    "full mode, 8142 frames, recorded budgets: VRAM hits 61.83 % of live routed experts (engine report: \"since start\" hit rate), 12022 promotions",
+    "per-round pool: 8142..8142 frames over 249 rounds; mean 8142; token-weighted 8142"
    ]
   },
   {
    "name": "short-2",
    "category": "short",
    "prompt_file": "bench/route_traces/prompts/short-2.json",
-   "prompt_sha256": "ce4c2c82c63ed1c7c57dd438415cb23422299eb3de4fed8e00232bff312cd698",
-   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8828 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/short-2.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/short-2.jsonl",
+   "prompt_sha256": "a21b5c0f84f775190bd515e571c3c9585f72ccea0b80c073c0aa4a5819225884",
+   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8899 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --greedy --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/short-2.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/short-2.jsonl",
    "trace_path": "out/route-traces/short-2.bin",
-   "trace_sha256": "3025115db17f751540581773011ab0a119b6995affeaaaac11c27b9c2b1ed1d3",
-   "trace_bytes": 1798896,
+   "trace_sha256": "9e13cf0a93e15a175c061e9e438d65d6b5a087039c9ac2b5b7985bfc1081a2eb",
+   "trace_bytes": 2020904,
+   "decode_settings": {
+    "mode": "greedy",
+    "note": "exact argmax; no sampling (temperature 0, no top-p/top-k truncation requested)",
+    "request": {
+     "min_p": null,
+     "seed": null,
+     "temperature": 0.0,
+     "top_k": null,
+     "top_p": 1.0
+    },
+    "serve_flag": "--greedy"
+   },
    "trace_version": 2,
-   "trace_header_frames": 8221,
-   "rounds": 266,
-   "generated_tokens": 482,
+   "trace_header_frames": 8142,
+   "rounds": 193,
+   "generated_tokens": 467,
    "generated_tokens_floor": 256,
    "qualifies": true,
-   "max_prompt_tokens": 692,
-   "completion_tokens_usage": 482,
+   "max_prompt_tokens": 826,
+   "completion_tokens_usage": 464,
    "steps": [
     {
-     "completion_tokens": 223,
+     "completion_tokens": 171,
      "finish_reason": "stop",
-     "label": "fix",
-     "prompt_tokens": 172,
-     "wall_seconds": 4.67
+     "label": "edit",
+     "prompt_tokens": 321,
+     "wall_seconds": 4.1
     },
     {
-     "completion_tokens": 45,
+     "completion_tokens": 85,
      "finish_reason": "stop",
      "label": "rigor",
-     "prompt_tokens": 433,
-     "wall_seconds": 1.15
+     "prompt_tokens": 539,
+     "wall_seconds": 2.17
     },
     {
-     "completion_tokens": 145,
+     "completion_tokens": 137,
      "finish_reason": "stop",
      "label": "test",
-     "prompt_tokens": 517,
-     "wall_seconds": 2.35
+     "prompt_tokens": 659,
+     "wall_seconds": 1.76
     },
     {
-     "completion_tokens": 69,
+     "completion_tokens": 71,
      "finish_reason": "stop",
      "label": "review",
-     "prompt_tokens": 692,
-     "wall_seconds": 1.41
+     "prompt_tokens": 826,
+     "wall_seconds": 1.58
     }
    ],
-   "engine_cache_line": "2026-10-12 23:52:29.941  DEBUG engine | expert cache: 8221 frames; request 86.0% of 34578 routed experts hit, 585 promotions, 0 landed, 3239 misses CPU-served; since start 76.8%; VRAM free 727 MiB",
+   "engine_cache_line": "2026-10-13 00:50:53.774  DEBUG engine | expert cache: 8142 frames; request 77.7% of 33336 routed experts hit, 717 promotions, 0 landed, 4806 misses CPU-served; since start 71.1%; VRAM free 704 MiB",
    "validate": [
-    "traces: 1, 266 rounds; 48 layers x 512 experts, top-10; captured with 8221 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
-    "full mode, 8221 frames, recorded budgets: VRAM hits 64.27 % of live routed experts (engine report: \"since start\" hit rate), 10936 promotions",
-    "per-round pool: 8221..8221 frames over 266 rounds; mean 8221; token-weighted 8221"
+    "traces: 1, 193 rounds; 48 layers x 512 experts, top-10; captured with 8142 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
+    "full mode, 8142 frames, recorded budgets: VRAM hits 59.95 % of live routed experts (engine report: \"since start\" hit rate), 10832 promotions",
+    "per-round pool: 8142..8142 frames over 193 rounds; mean 8142; token-weighted 8142"
    ]
   },
   {
    "name": "short-3",
    "category": "short",
    "prompt_file": "bench/route_traces/prompts/short-3.json",
-   "prompt_sha256": "d6e5a5d22cb3efe79f9525acbd74788e599250770c6f0eee1c091741755edac7",
-   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8828 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/short-3.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/short-3.jsonl",
+   "prompt_sha256": "eabe805fc08af591d4b3e5713977198544012fb9e17093c812e6f728bb4acc17",
+   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8899 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --greedy --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/short-3.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/short-3.jsonl",
    "trace_path": "out/route-traces/short-3.bin",
-   "trace_sha256": "090e8dea94f4c5192c12ea2c59abf65ab849aa815dd726778edf98bb3dac0ead",
-   "trace_bytes": 2118484,
+   "trace_sha256": "c3caebe857438a6d2d70df747bb3052a278af03590276b2350cf955fecc395d7",
+   "trace_bytes": 2163556,
+   "decode_settings": {
+    "mode": "greedy",
+    "note": "exact argmax; no sampling (temperature 0, no top-p/top-k truncation requested)",
+    "request": {
+     "min_p": null,
+     "seed": null,
+     "temperature": 0.0,
+     "top_k": null,
+     "top_p": 1.0
+    },
+    "serve_flag": "--greedy"
+   },
    "trace_version": 2,
-   "trace_header_frames": 8221,
-   "rounds": 285,
-   "generated_tokens": 613,
+   "trace_header_frames": 8197,
+   "rounds": 257,
+   "generated_tokens": 632,
    "generated_tokens_floor": 256,
    "qualifies": true,
-   "max_prompt_tokens": 824,
-   "completion_tokens_usage": 608,
+   "max_prompt_tokens": 908,
+   "completion_tokens_usage": 628,
    "steps": [
     {
-     "completion_tokens": 183,
+     "completion_tokens": 213,
      "finish_reason": "stop",
-     "label": "fix",
-     "prompt_tokens": 172,
-     "wall_seconds": 4.28
+     "label": "edit",
+     "prompt_tokens": 232,
+     "wall_seconds": 3.85
     },
     {
-     "completion_tokens": 222,
+     "completion_tokens": 51,
      "finish_reason": "stop",
      "label": "rigor",
-     "prompt_tokens": 393,
-     "wall_seconds": 3.51
+     "prompt_tokens": 492,
+     "wall_seconds": 1.47
     },
     {
-     "completion_tokens": 140,
+     "completion_tokens": 300,
      "finish_reason": "stop",
      "label": "test",
-     "prompt_tokens": 654,
-     "wall_seconds": 2.65
+     "prompt_tokens": 578,
+     "wall_seconds": 4.8
     },
     {
-     "completion_tokens": 63,
+     "completion_tokens": 64,
      "finish_reason": "stop",
      "label": "review",
-     "prompt_tokens": 824,
-     "wall_seconds": 1.38
+     "prompt_tokens": 908,
+     "wall_seconds": 1.39
     }
    ],
-   "engine_cache_line": "2026-10-12 23:53:29.230  DEBUG engine | expert cache: 8221 frames; request 83.2% of 30531 routed experts hit, 672 promotions, 0 landed, 3448 misses CPU-served; since start 76.0%; VRAM free 719 MiB",
+   "engine_cache_line": "2026-10-13 00:53:50.166  DEBUG engine | expert cache: 8197 frames; request 76.1% of 29856 routed experts hit, 613 promotions, 0 landed, 4240 misses CPU-served; since start 72.9%; VRAM free 719 MiB",
    "validate": [
-    "traces: 1, 285 rounds; 48 layers x 512 experts, top-10; captured with 8221 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
-    "full mode, 8221 frames, recorded budgets: VRAM hits 66.13 % of live routed experts (engine report: \"since start\" hit rate), 12378 promotions",
-    "per-round pool: 8221..8221 frames over 285 rounds; mean 8221; token-weighted 8221"
+    "traces: 1, 257 rounds; 48 layers x 512 experts, top-10; captured with 8197 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
+    "full mode, 8197 frames, recorded budgets: VRAM hits 64.48 % of live routed experts (engine report: \"since start\" hit rate), 12804 promotions",
+    "per-round pool: 8197..8197 frames over 257 rounds; mean 8197; token-weighted 8197"
    ]
   },
   {
    "name": "short-4",
    "category": "short",
    "prompt_file": "bench/route_traces/prompts/short-4.json",
-   "prompt_sha256": "1ac8791f6452f707ea01ebe8419693db0b3a97779512a7d4fbd2827d862332a9",
-   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8828 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/short-4.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/short-4.jsonl",
+   "prompt_sha256": "cb0a5aa73cbeda46c89530bfbc39154f2326293e3523e5e78385c8f957f28e41",
+   "serve_command": "/home/kido/network/projects/Infernix/build/apps/infernix-serve /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram --host 127.0.0.1 --port 8899 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 --max-context 1048576 --rope-yarn-factor 4 --prefill-chunk 4096 --spec mtp --draft-tokens 4 --lm-head-draft --greedy --max-concurrency 4 --expert-ram-mib 66000 --vision --preserve-thinking --reasoning-loop conclude --default-thinking-budget 32768 --max-pending-requests 64 --pending-timeout-ms 600000 --media-cache-mib 2048 --log-level debug --route-trace /home/kido/network/projects/Infernix/out/route-traces/short-4.bin --request-log-jsonl /home/kido/network/projects/Infernix/out/route-traces/short-4.jsonl",
    "trace_path": "out/route-traces/short-4.bin",
-   "trace_sha256": "8c8c6699f92ece5b25a2332ba306ec97b731febf4115fac9399c74d7efc2b8dc",
-   "trace_bytes": 1992880,
+   "trace_sha256": "286027dc13c54b5945c71e94b157996fa5d350f81d13270545caef673322aa15",
+   "trace_bytes": 2126484,
+   "decode_settings": {
+    "mode": "greedy",
+    "note": "exact argmax; no sampling (temperature 0, no top-p/top-k truncation requested)",
+    "request": {
+     "min_p": null,
+     "seed": null,
+     "temperature": 0.0,
+     "top_k": null,
+     "top_p": 1.0
+    },
+    "serve_flag": "--greedy"
+   },
    "trace_version": 2,
-   "trace_header_frames": 8221,
-   "rounds": 265,
-   "generated_tokens": 570,
+   "trace_header_frames": 8197,
+   "rounds": 244,
+   "generated_tokens": 614,
    "generated_tokens_floor": 256,
    "qualifies": true,
-   "max_prompt_tokens": 793,
-   "completion_tokens_usage": 567,
+   "max_prompt_tokens": 891,
+   "completion_tokens_usage": 610,
    "steps": [
     {
-     "completion_tokens": 152,
+     "completion_tokens": 172,
      "finish_reason": "stop",
-     "label": "fix",
-     "prompt_tokens": 172,
+     "label": "edit",
+     "prompt_tokens": 223,
      "wall_seconds": 3.27
     },
     {
-     "completion_tokens": 201,
+     "completion_tokens": 224,
      "finish_reason": "stop",
      "label": "rigor",
-     "prompt_tokens": 362,
-     "wall_seconds": 2.8
+     "prompt_tokens": 442,
+     "wall_seconds": 3.43
     },
     {
-     "completion_tokens": 161,
+     "completion_tokens": 160,
      "finish_reason": "stop",
      "label": "test",
-     "prompt_tokens": 602,
-     "wall_seconds": 2.94
+     "prompt_tokens": 701,
+     "wall_seconds": 3.39
     },
     {
-     "completion_tokens": 53,
+     "completion_tokens": 54,
      "finish_reason": "stop",
      "label": "review",
-     "prompt_tokens": 793,
-     "wall_seconds": 1.2
+     "prompt_tokens": 891,
+     "wall_seconds": 1.24
     }
    ],
-   "engine_cache_line": "2026-10-12 23:54:26.717  DEBUG engine | expert cache: 8221 frames; request 80.1% of 26880 routed experts hit, 562 promotions, 0 landed, 3555 misses CPU-served; since start 76.0%; VRAM free 719 MiB",
+   "engine_cache_line": "2026-10-13 00:52:32.755  DEBUG engine | expert cache: 8197 frames; request 72.7% of 25795 routed experts hit, 554 promotions, 0 landed, 4154 misses CPU-served; since start 71.0%; VRAM free 719 MiB",
    "validate": [
-    "traces: 1, 265 rounds; 48 layers x 512 experts, top-10; captured with 8221 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
-    "full mode, 8221 frames, recorded budgets: VRAM hits 66.16 % of live routed experts (engine report: \"since start\" hit rate), 12040 promotions",
-    "per-round pool: 8221..8221 frames over 265 rounds; mean 8221; token-weighted 8221"
+    "traces: 1, 244 rounds; 48 layers x 512 experts, top-10; captured with 8197 frames, 4 lanes, max width 5, MTP 4, n-gram 0",
+    "full mode, 8197 frames, recorded budgets: VRAM hits 62.72 % of live routed experts (engine report: \"since start\" hit rate), 12566 promotions",
+    "per-round pool: 8197..8197 frames over 244 rounds; mean 8197; token-weighted 8197"
    ]
   }
  ]

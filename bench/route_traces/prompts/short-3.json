@@ -5,11 +5,11 @@
  "tools": [],
  "steps": [
   {
-   "label": "fix",
+   "label": "edit",
    "add": [
     {
      "role": "user",
-     "content": "Snippet:\nsrc/models/qwen4_exp/program/expert_residency.h\n    [[nodiscard]] std::uint32_t frames() const noexcept { return frames_; }\n    [[nodiscard]] std::uint32_t frame_limit() const noexcept { return limit_; }\n    [[nodiscard]] bool elastic() const noexcept { return arena_ != nullptr; }\nThis is the expert pool's frame-count surface. Add one accessor that returns the bytes the frames occupy now, keeping the four existing accessors unchanged. Show a unified diff and at most three sentences of rationale."
+     "content": "Snippet:\nsrc/models/qwen4_exp/memory_plan.cpp\nstd::uint64_t internal_reserve(std::uint32_t graphs, std::uint64_t graph_bytes, bool elastic) {\n    const std::uint64_t counted = elastic ? std::min<std::uint32_t>(graphs, 32) : graphs;\n    return std::max(256 * kLedgerMiB, 128 * kLedgerMiB + graph_bytes * counted);\n}\n\nThe elastic branch caps the counted CUDA-graph ledgers at the bare literal 32, which is why the reserve saturates. Give that cap a named constant, use it here, and say in one sentence what the cap protects against.\n\nShow the change as a unified diff. Be terse: the diff plus at most three sentences."
     }
    ],
    "max_tokens": 400,
@@ -20,7 +20,7 @@
    "add": [
     {
      "role": "user",
-     "content": "Now make `frame_limit()` constexpr-correct and explain in two sentences why the change is or is not a behavior change."
+     "content": "Now justify the edit against the snippet above: name the invariant it preserves and one boundary it could break, in two sentences, then give the diff again if it changed."
     }
    ],
    "max_tokens": 400,
@@ -31,7 +31,7 @@
    "add": [
     {
      "role": "user",
-     "content": "Give the smallest unit test that pins `frames()` and the new accessor on an empty pool, as a diff plus two sentences."
+     "content": "Give the smallest unit test that pins the behaviour you just changed, as a diff plus two sentences of rationale."
     }
    ],
    "max_tokens": 400,

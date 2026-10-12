@@ -6,7 +6,8 @@ repository file bundle differs between sessions. Every session is a sequence of 
 recorder appends the step's messages to the live conversation, sends one chat completion, and
 appends the model's reply before the next step. Long sessions carry the repository's own sources
 as `role: "tool"` results (an assistant `tool_calls` message precedes each result), then follow-up
-edit/diff/review requests; short sessions are a terse edit/diff exchange over a small snippet.
+edit/diff/review requests; the four short sessions are four distinct, small edit/diff tasks over a
+different file each, with thinking off.
 
 Deterministic: the file slices are fixed by (path, start, length) and the wording is literal, so
 re-running regenerates byte-identical prompt files.
@@ -140,34 +141,103 @@ def long_session(index):
             "tools": TOOLS, "steps": steps}
 
 
-SHORT_SNIPPET = (
-    "src/models/qwen4_exp/program/expert_residency.h\n"
-    "    [[nodiscard]] std::uint32_t frames() const noexcept { return frames_; }\n"
-    "    [[nodiscard]] std::uint32_t frame_limit() const noexcept { return limit_; }\n"
-    "    [[nodiscard]] bool elastic() const noexcept { return arena_ != nullptr; }\n"
-)
+SHORT_TASKS = {
+    1: {
+        "file": "src/models/qwen4_exp/program/expert_residency.h",
+        "snippet": (
+            "src/models/qwen4_exp/program/expert_residency.h\n"
+            "    // Whether the pool can resize after its first size (VMM).\n"
+            "    [[nodiscard]] bool elastic() const noexcept { return arena_ != nullptr; }\n"
+            "    [[nodiscard]] std::uint32_t frame_limit() const noexcept { return limit_; }\n"
+            "    // Bytes the frames occupy now (whole chunks with VMM).\n"
+            "    [[nodiscard]] std::uint64_t pool_bytes() const noexcept;\n"
+            "    // ... (many members elided) ...\n"
+            "    [[nodiscard]] std::uint32_t frames() const noexcept { return frames_; }\n"
+        ),
+        "ask": (
+            "This is the expert pool's frame surface. `frames()` is how many frames are backed now "
+            "and `frame_limit()` how many the pool can back at most; `frames_` and `limit_` are its "
+            "only frame-count state. Add one accessor that returns how many frames the pool can "
+            "still back, keeping the existing accessors unchanged."),
+    },
+    2: {
+        "file": "src/models/qwen4_exp/program/route_trace.cpp",
+        "snippet": (
+            "src/models/qwen4_exp/program/route_trace.cpp\n"
+            "constexpr std::uint32_t kVersion = 2;\n"
+            "// ...\n"
+            "    std::array<std::uint32_t, 16> header{};\n"
+            "    std::memcpy(header.data(), \"NRTRACE1\", 8);\n"
+            "    header[2]  = kVersion;\n"
+            "    header[3]  = setup.layers;\n"
+            "    header[4]  = setup.experts;\n"
+            "    header[5]  = setup.top_k;\n"
+            "    header[6]  = setup.frames;\n"
+            "    header[7]  = setup.max_columns;\n"
+            "    // ... header[8..12] similar ...\n"
+            "    header[12] = setup.prefill_chunk;\n"
+            "    write(header.data(), sizeof(header));\n"
+        ),
+        "ask": (
+            "route_trace.h documents a fixed 64-byte header of sixteen little-endian u32 words, but "
+            "this source spells that count only as the bare literal 16. Give the header's size one "
+            "named constant, size the array from it, and add a static_assert tying it to the "
+            "documented 64 bytes so a future field cannot silently change the format."),
+    },
+    3: {
+        "file": "src/models/qwen4_exp/memory_plan.cpp",
+        "snippet": (
+            "src/models/qwen4_exp/memory_plan.cpp\n"
+            "std::uint64_t internal_reserve(std::uint32_t graphs, std::uint64_t graph_bytes, bool elastic) {\n"
+            "    const std::uint64_t counted = elastic ? std::min<std::uint32_t>(graphs, 32) : graphs;\n"
+            "    return std::max(256 * kLedgerMiB, 128 * kLedgerMiB + graph_bytes * counted);\n"
+            "}\n"
+        ),
+        "ask": (
+            "The elastic branch caps the counted CUDA-graph ledgers at the bare literal 32, which is "
+            "why the reserve saturates. Give that cap a named constant, use it here, and say in one "
+            "sentence what the cap protects against."),
+    },
+    4: {
+        "file": "src/serve/serve_options.cpp",
+        "snippet": (
+            "src/serve/serve_options.cpp\n"
+            "        } else if (arg == \"--top-k\") {\n"
+            "            const int top_k = parse_nonnegative_int(require_value(\"--top-k\"), \"top-k\");\n"
+            "            if (top_k > 20) { throw std::invalid_argument(\"top-k must be in [0,20]\"); }\n"
+            "            options.sampling_overrides.top_k = top_k;\n"
+            "        }\n"
+        ),
+        "ask": (
+            "`--top-k`'s upper bound is the sampler's API limit, but the literal 20 is written twice "
+            "here \u2014 in the check and in the error message \u2014 so the two can drift. Introduce "
+            "one named constant for the bound and use it in both places."),
+    },
+}
 
-SHORT_STEPS = [
-    ("fix", 400,
-     "Snippet:\n" + SHORT_SNIPPET +
-     "This is the expert pool's frame-count surface. Add one accessor that returns the bytes the "
-     "frames occupy now, keeping the four existing accessors unchanged. Show a unified diff and at "
-     "most three sentences of rationale."),
-    ("rigor", 400,
-     "Now make `frame_limit()` constexpr-correct and explain in two sentences why the change is or "
-     "is not a behavior change."),
-    ("test", 400,
-     "Give the smallest unit test that pins `frames()` and the new accessor on an empty pool, as a "
-     "diff plus two sentences."),
-    ("review", 400,
-     "Name one boundary case your test does not cover, in two sentences, then stop."),
-]
+# One template per category, identical across the four sessions: the same four turns in the same
+# order. Only the edit turn's ask and the snippet differ per session, so the four short sessions are
+# four distinct tasks (protocol rev 5 \u00a73) rather than one task under four names.
+SHORT_TURNS = [("edit", 400), ("rigor", 400), ("test", 400), ("review", 400)]
+
+SHORT_TURN_TEXT = {
+    "edit": "{ask}\n\nShow the change as a unified diff. Be terse: the diff plus at most three sentences.",
+    "rigor": "Now justify the edit against the snippet above: name the invariant it preserves and one "
+             "boundary it could break, in two sentences, then give the diff again if it changed.",
+    "test": "Give the smallest unit test that pins the behaviour you just changed, as a diff plus two "
+            "sentences of rationale.",
+    "review": "Name one boundary case your test does not cover, in two sentences, then stop.",
+}
 
 
 def short_session(index):
+    task = SHORT_TASKS[index]
     steps = []
-    for label, max_tokens, prompt in SHORT_STEPS:
-        steps.append({"label": label, "add": [{"role": "user", "content": prompt}],
+    for label, max_tokens in SHORT_TURNS:
+        text = SHORT_TURN_TEXT[label].format(ask=task["ask"])
+        if label == "edit":
+            text = "Snippet:\n" + task["snippet"] + "\n" + text
+        steps.append({"label": label, "add": [{"role": "user", "content": text}],
                       "max_tokens": max_tokens, "enable_thinking": False})
     return {"name": f"short-{index}", "category": "short", "system": SHORT_SYSTEM,
             "tools": [], "steps": steps}

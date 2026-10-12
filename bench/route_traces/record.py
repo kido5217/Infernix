@@ -2,9 +2,13 @@
 """Records one route trace per coding-agent session with the locally built serve (#11).
 
 For each session in bench/route_traces/prompts/ it starts `infernix-serve` at the deployed
-Qwen3.8-Flash-Next flags plus `--route-trace <trace>` and `--log-level debug`, drives the
-session's steps over the OpenAI chat-completions API, stops the server with SIGTERM (so the
+Qwen3.8-Flash-Next flags plus `--greedy`, `--route-trace <trace>` and `--log-level debug`, drives
+the session's steps over the OpenAI chat-completions API, stops the server with SIGTERM (so the
 Program's orderly shutdown writes the per-layer hit/miss diagnostic), and records the outcome.
+
+Every session is decoded **greedily** (protocol rev 5 §3): the serve runs `--greedy` (exact argmax
+for every request) and each request pins `temperature` 0.0 / `top_p` 1.0, so the offline trace
+corresponds to the greedy live A/B. The settings are written into every result and the manifest.
 
 Outputs (all under out/route-traces/, which is git-ignored):
   <name>.bin    the NRTRACE route trace
@@ -45,14 +49,17 @@ PORT = int(os.environ.get("INFERNIX_PORT", "8828"))
 MODEL_ID = "Qwen3.8-Flash-Next"
 
 # The unit's flags (nixos-configs/users/kido/llm.nix, infernix-qwen38-flash-next) exactly, plus
-# --log-level debug for the per-layer diagnostic. --request-log-jsonl and --route-trace are added
-# per session by the recorder.
+# --greedy for the frozen greedy decode and --log-level debug for the per-layer diagnostic.
+# --request-log-jsonl and --route-trace are added per session by the recorder.
 BASE_FLAGS = [
     "--ngram-volume", NGRAM,
     "--host", HOST, "--port", str(PORT), "--model-id", MODEL_ID,
     "--kv-dtype", "nvfp4",
     "--max-context", "1048576", "--rope-yarn-factor", "4", "--prefill-chunk", "4096",
     "--spec", "mtp", "--draft-tokens", "4", "--lm-head-draft",
+    # Greedy decode (protocol rev 5 §3): --greedy forces temperature 0 (exact argmax) for every
+    # request regardless of the request body, so both the recorded trace and the live A/B are greedy.
+    "--greedy",
     "--max-concurrency", "4",
     "--expert-ram-mib", "66000",
     "--vision", "--preserve-thinking",
@@ -60,6 +67,18 @@ BASE_FLAGS = [
     "--max-pending-requests", "64", "--pending-timeout-ms", "600000", "--media-cache-mib", "2048",
     "--log-level", "debug",
 ]
+
+# The frozen decode settings (protocol rev 5 §3), recorded in every result so the manifest alone
+# proves them. `--greedy` forces temperature 0 / exact argmax server-side for every request
+# (docs/serving.md "Sampling"; src/serve/translate.cpp:86 sets temperature 0 when options.greedy);
+# the request additionally pins temperature 0.0 and top_p 1.0. The engine's registered top-k default
+# (20, the sampler's API maximum) cannot change an exact argmax, so no top-k truncation is requested.
+DECODE_SETTINGS = {
+    "mode": "greedy",
+    "serve_flag": "--greedy",
+    "request": {"temperature": 0.0, "top_p": 1.0, "top_k": None, "min_p": None, "seed": None},
+    "note": "exact argmax; no sampling (temperature 0, no top-p/top-k truncation requested)",
+}
 
 
 def log(msg):
@@ -120,7 +139,8 @@ def stop_serve(proc, handle):
 
 def chat(session, messages, step):
     body = {"model": MODEL_ID, "messages": messages, "max_tokens": step["max_tokens"],
-            "temperature": 1.0, "top_p": 0.95, "stream": False}
+            "temperature": DECODE_SETTINGS["request"]["temperature"],
+            "top_p": DECODE_SETTINGS["request"]["top_p"], "stream": False}
     if step.get("enable_thinking") is not None:
         # The engine reads the per-request thinking toggle from chat_template_kwargs.
         body["chat_template_kwargs"] = {"enable_thinking": bool(step["enable_thinking"])}
@@ -175,6 +195,7 @@ def run_session(session_path):
         "serve_command": " ".join([EXE, ARTIFACT] + BASE_FLAGS + ["--route-trace", trace,
                                                                   "--request-log-jsonl", request_log]),
         "trace_path": os.path.relpath(trace, ROOT),
+        "decode_settings": DECODE_SETTINGS,
         "prompt_tokens_total": sum(s["prompt_tokens"] or 0 for s in steps),
         "max_prompt_tokens": max((s["prompt_tokens"] or 0 for s in steps), default=0),
         "completion_tokens_usage": sum(s["completion_tokens"] or 0 for s in steps),
