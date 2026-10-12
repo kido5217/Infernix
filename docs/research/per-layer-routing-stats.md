@@ -21,8 +21,9 @@ ordering is reproducible rather than noise:
   range (**42x** against the pooled range at the control budget);
 - first-half vs second-half **test-retest Spearman is 0.94** (min 0.89), and cross-session
   **pairwise Spearman averages 0.83** (min 0.57) — the layers keep their rank across all eight
-  sessions, and the long- and short-regime orderings are related at Spearman 0.74 — a systematic
-  regime shift, not the near-identity seen within a regime (0.93 long / 0.95 short).
+  sessions; the correlation between the long- and short-group mean layer orderings is Spearman 0.75
+  (mean cross-regime pairwise 0.74), a systematic regime shift rather than the near-identity seen
+  within a regime (0.93 long / 0.95 short).
 
 So the entropy premise is **not** dead on arrival; the earlier expectation that it would be flat is
 falsified by the data. **What this does not establish** is that an entropy-derived prior *improves
@@ -167,8 +168,9 @@ Reading: the across-layer range (1.50 pooled / 1.73 across layer means / 1.82 wi
 / 1.78 within the short regime) dwarfs both the per-layer across-session std and the bootstrap noise
 floor; the pattern survives sample-size control (all sessions subsampled to 400 tokens still span
 1.72 bits, and the matched noise floor at that budget is 0.036 bits). It is not a long-vs-short
-artifact in the sense of being absent in one regime, but the two regimes do reorder the layers:
-their orderings are related at Spearman 0.74 against 0.93 (long) and 0.95 (short) within a regime.
+artifact in the sense of being absent in one regime, but the two regimes do reorder the layers: the
+long- and short-group mean orderings correlate at Spearman 0.75 (mean cross-regime pairwise 0.74),
+against 0.93 (long) and 0.95 (short) within a regime.
 The lowest-entropy (most concentrated) layers are **15, 31, 40, 32, 39, 16** (top-64 share
 0.64-0.75); the highest-entropy (most spread) layers are **0, 2, 1, 22, 6, 7, 38, 18** (top-64 share
 0.33-0.43). The session-to-session spread is heteroscedastic: the most stable layers are **42, 37, 34,
