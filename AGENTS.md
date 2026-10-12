@@ -201,3 +201,13 @@ only when that work is in scope. Install or upgrade dependencies only when the t
 
 Create commits only when requested. Use Conventional Commit subjects with concise lowercase types
 such as `feat`, `fix`, `perf`, `bench`, `test`, `build`, `refactor`, `docs`, or `chore`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `kido5217/Infernix`, managed with `gh`. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` + `docs/adr/`, complementing (never duplicating) the `docs/maintainer/*` authorities. See `docs/agents/domain.md`.
