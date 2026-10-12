@@ -6,6 +6,8 @@
   outputs =
     { self, nixpkgs }:
     let
+      # x86_64-linux only: the product targets sm_120a on Linux and Windows, and this
+      # harness is the Linux workstation's.
       system = "x86_64-linux";
 
       # The CUDA toolkit is unfree (CUDA EULA).
@@ -22,12 +24,16 @@
       # required modules include sphinx 9.1.0, which needs Python >= 3.12. A 3.11 shell
       # without torch would be unable to run the registered torch-importing interop test
       # (tests/artifact/flash_next_interop.py) or the converter suites, so 3.13 it is.
-      # The set is what the tree's Python imports: numpy (expert-cache replay, artifact
-      # tools), jinja2/jsonschema (the registered text tests under tests/text/),
-      # torch/safetensors (artifact and converter interop), pytest, pyyaml, rich.
-      # Not included: `transformers`, imported only by the bench corpus/fixture builders
-      # (tools/bench/) and tools/flash_next/upstream_check.py; add `ps.transformers`
-      # here if a bench fixture build is needed.
+      #
+      # The set covers what every registered CTest and the expert-cache replay harness
+      # import: numpy (tools/expert_cache_replay/, tools/artifact/), jinja2 and jsonschema
+      # (tests/text/, tests/models/qwen3_5/), torch and safetensors (the artifact and
+      # converter interop tests), plus pytest, pyyaml and rich for the suites and tooling.
+      # It deliberately omits modules used only by standalone, function-local or
+      # optional-imported scripts: transformers (tools/bench/ corpus and fixture
+      # builders, tools/flash_next/upstream_check.py), sympy, modelopt, gguf, PIL and
+      # evalscope. None is reachable from a registered test; add any of them below if
+      # such a script is needed.
       python = pkgs.python313.withPackages (
         ps: with ps; [
           jinja2
