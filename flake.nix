@@ -16,6 +16,8 @@
         config.allowUnfree = true;
       };
 
+      # CUDA 13.1, matching the validated toolkit (docs/maintainer/build-system.md:4) and
+      # the 13.1.2 images the product container pins (Dockerfile).
       cuda = pkgs.cudaPackages_13_1;
 
       # Python 3.13, mirroring the FrInfer harness this flake is vendored from. The
@@ -58,6 +60,10 @@
           cuda.cuda_cudart
           cuda.cuda_profiler_api
           cuda.cuda_nvtx
+          # <nvml.h> for tools/flash_next_probe/vram_probe.cpp. The probe loads NVML at
+          # run time, but its compile still needs the header: without this the
+          # BUILD_TESTING=ON tree fails with "fatal error: nvml.h: No such file or directory".
+          cuda.cuda_nvml_dev
           cuda.nsight_compute
           cuda.nsight_systems
           pkgs.ffmpeg
