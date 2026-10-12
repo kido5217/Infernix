@@ -9,25 +9,31 @@ run 2026-10-13 on `main` @ `4cc480fa`.
 ## Verdict
 
 **Not flat — a static per-layer statistic has real, stable structure here.** Per-layer routing
-entropy spans **1.50 bits** pooled across the eight sessions (6.981 at layer 31 to 8.482 at layer 0;
+entropy spans **1.50 bits** pooled across the eight sessions (6.981 at layer 15 to 8.482 at layer 0;
 1.73 bits across the 48 layer means) — about a fifth of the `log2(512)=9`-bit maximum — and the layer
 ordering is reproducible rather than noise:
 
 - the per-layer spread across the eight sessions is only **0.155 bits** on average (within one regime,
-  0.079 bits long / 0.113 bits short), so the across-layer range is **11x** the session-to-session
-  variation **for the same layer**;
-- a within-session bootstrap noise floor is **0.023 bits**, **74x** smaller than the range;
+  0.079 bits long / 0.113 bits short), so the across-layer **layer-mean** range (1.73 bits; 1.50 bits
+  pooled) is **11x** (pooled: **9.7x**) the session-to-session variation **for the same layer**;
+- a within-session bootstrap noise floor is **0.023 bits at each session's own length** and
+  **0.036 bits at the 400-token control budget** — **74x** and **49x** smaller than the layer-mean
+  range (**42x** against the pooled range at the control budget);
 - first-half vs second-half **test-retest Spearman is 0.94** (min 0.89), and cross-session
   **pairwise Spearman averages 0.83** (min 0.57) — the layers keep their rank across all eight
-  sessions, and the long- and short-regime orderings agree at 0.75.
+  sessions, and the long- and short-regime orderings are related at Spearman 0.74 — a systematic
+  regime shift, not the near-identity seen within a regime (0.93 long / 0.95 short).
 
 So the entropy premise is **not** dead on arrival; the earlier expectation that it would be flat is
 falsified by the data. **What this does not establish** is that an entropy-derived prior *improves
 the cache*: entropy is a near-perfect proxy for concentration here (Spearman &#8722;0.99 against the
 pooled top-64 share), which is a static popularity statistic — not the hit-rate-response curve
 MoE-CORE allocates on — and this repo's own replays already lost 3-34% to *hard* per-layer quotas
-([MoE-CORE note](moe-core-layer-allocator.md) section "What is genuinely borrowable"). The
-cache-response test that would settle the arm remains open.
+(`docs/maintainer/qwen3_8-flash-next-design.md` §9.3, rows for "LRU, equal per-layer quotas";
+the [MoE-CORE
+note](https://github.com/kido5217/Infernix/blob/research/moe-core-layer-allocator/docs/research/moe-core-layer-allocator.md)
+records the paper's own +1.1% ablation of non-uniform capacity). The cache-response test that would
+settle the arm remains open.
 
 ## Data and convention
 
@@ -107,18 +113,22 @@ Across-layer range of entropy vs the spread for the same layer across sessions, 
 correlation of layers across sessions (raw script lines):
 
 ```
-    across-layer entropy range (full data)   per session: long-1=6.561..8.358, long-2=6.470..8.217, long-3=6.329..8.211, long-4=6.384..8.256, short-1=6.862..8.394, short-2=6.311..8.403, short-3=6.595..8.487, short-4=6.786..8.387
-    across-layer range of the POOLED entropy: 6.981..8.482 (R=1.5013 bits)
-    per-layer entropy spread across 8 sessions: mean std=0.1548 bits, median=0.1457, max=0.3396 bits
-      within regime: long range=1.8244, long across-session std=0.0788 | short range=1.7794, short across-session std=0.1134
-      long-group mean vs short-group mean layer ordering: Spearman=0.751
-    sample-size-controlled (T=400): across-layer range=6.577..8.295 (R=1.7180), per-layer across-session std mean=0.1546
-    within-session bootstrap noise (T=4504-ish): per-layer std mean=0.0235, max=0.0574 bits
-    pairwise Spearman of layer entropy across sessions: mean=0.827, min=0.574, max=0.982 (of 28 pairs)
-    split-half test-retest Spearman (first vs second half, per session): mean=0.943, min=0.891, max=0.989
-    entropy vs pooled top-64 share: Spearman=-0.992
-    entropy range / per-layer across-session std = 11.17x
-    entropy range / bootstrap noise = 73.74x
+across-layer entropy range (full data)   per session: long-1=6.561..8.358, long-2=6.470..8.217, long-3=6.329..8.211, long-4=6.384..8.256, short-1=6.862..8.394, short-2=6.311..8.403, short-3=6.595..8.487, short-4=6.786..8.387
+across-layer range of the POOLED entropy: 6.981..8.482 (R=1.5013 bits)
+per-layer entropy spread across 8 sessions: mean std=0.1548 bits, median=0.1457, max=0.3396 bits
+  within regime: long range=1.8244, long across-session std=0.0788 | short range=1.7794, short across-session std=0.1134
+  long-group mean vs short-group mean layer ordering: Spearman=0.751
+sample-size-controlled (T=400): across-layer range=6.577..8.295 (R=1.7180), per-layer across-session std mean=0.1546
+within-session bootstrap noise (native T): per-layer std mean=0.0235, max=0.0574 bits
+within-session bootstrap noise (T=400): per-layer std mean=0.0356, max=0.0638 bits
+pairwise Spearman of layer entropy across sessions: mean=0.827, min=0.574, max=0.982 (of 28 pairs)
+split-half test-retest Spearman (first vs second half, per session): mean=0.943, min=0.891, max=0.989
+entropy vs pooled top-64 share: Spearman=-0.992
+entropy ranges: pooled=1.5013 bits, layer-mean=1.7296 bits
+entropy range / per-layer across-session std (layer-mean range) = 11.17x (pooled range: 9.70x)
+entropy range / bootstrap noise (native T, layer-mean range) = 73.74x
+entropy range / bootstrap noise (T=400, layer-mean range) = 48.61x
+entropy range / bootstrap noise (T=400, pooled range) = 42.19x
 ```
 
 Grouped JSON summary:
@@ -138,6 +148,9 @@ Grouped JSON summary:
  "subsample_session_std_mean": 0.15459603917146483,
  "bootstrap_noise_mean": 0.023456584696935706,
  "bootstrap_noise_max": 0.05736581978274898,
+ "bootstrap_noise_matched_mean": 0.035580916845633435,
+ "bootstrap_noise_matched_max": 0.06382535450716957,
+ "noise_budget_tokens": 400,
  "spearman_mean": 0.8266585509583774,
  "spearman_min": 0.573816760746852,
  "spearman_max": 0.9824142422926617,
@@ -153,13 +166,16 @@ Grouped JSON summary:
 Reading: the across-layer range (1.50 pooled / 1.73 across layer means / 1.82 within the long regime
 / 1.78 within the short regime) dwarfs both the per-layer across-session std and the bootstrap noise
 floor; the pattern survives sample-size control (all sessions subsampled to 400 tokens still span
-1.72 bits) and is not a long-vs-short artifact (the two regimes' layer orderings agree at 0.75).
+1.72 bits, and the matched noise floor at that budget is 0.036 bits). It is not a long-vs-short
+artifact in the sense of being absent in one regime, but the two regimes do reorder the layers:
+their orderings are related at Spearman 0.74 against 0.93 (long) and 0.95 (short) within a regime.
 The lowest-entropy (most concentrated) layers are **15, 31, 40, 32, 39, 16** (top-64 share
 0.64-0.75); the highest-entropy (most spread) layers are **0, 2, 1, 22, 6, 7, 38, 18** (top-64 share
 0.33-0.43). The session-to-session spread is heteroscedastic: the most stable layers are **42, 37, 34,
 22, 7, 21** (std 0.05-0.07 bits) while the least stable are **15, 14, 19, 17, 26, 11**
 (std 0.25-0.34 bits) — the concentrated low-entropy layers 15 and 14 drift most across sessions, and
-layer 0 is both the highest-entropy and among the stable ones. The weakest session pair is
+layer 0 is the highest-entropy layer and sits in the more stable half (std 0.09 bits, 10th of 48),
+though outside the 0.05-0.07 band. The weakest session pair is
 long-3 x short-1 at rho = 0.57.
 
 ## Temporal drift within a session
@@ -256,5 +272,9 @@ that reader as a sibling. Seed 17 fixes the bootstrap/subsample draws; `SUBSAMPL
 - Manifest and protocol: `bench/route_traces/manifest.json`, `out/route-traces/validate.txt`.
 - Reader: `tools/expert_cache_replay/host_tier.py` (`read_trace`, `Round`).
 - Script: `tools/expert_cache_replay/per_layer_routing_stats.py`.
-- Prior art: [per-layer-telemetry](per-layer-telemetry.md), [MoE-CORE allocator](moe-core-layer-allocator.md);
-  arXiv:2608.18261 (uniform per-layer capacity, no entropy), arXiv:2610.01950 (MoE-CORE, no entropy).
+- Prior art (research branches, not merged): `docs/research/per-layer-telemetry.md` on
+  `research/per-layer-telemetry`, and
+  [MoE-CORE allocator](https://github.com/kido5217/Infernix/blob/research/moe-core-layer-allocator/docs/research/moe-core-layer-allocator.md)
+  on `research/moe-core-layer-allocator`; the 3-34% equal-quota loss is in tree at
+  `docs/maintainer/qwen3_8-flash-next-design.md` §9.3. arXiv:2608.18261 (uniform per-layer capacity,
+  no entropy), arXiv:2610.01950 (MoE-CORE, no entropy).

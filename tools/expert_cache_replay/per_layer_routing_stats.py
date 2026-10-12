@@ -105,12 +105,18 @@ def stats_for(counts: np.ndarray, top_cut: int = TOP_CUT) -> dict:
     return {'n': n, 'entropy': H, 'top_share': conc, 'distinct': distinct}
 
 
-def bootstrap_noise(ids: np.ndarray, experts: int, draws: int, rng: np.random.Generator) -> np.ndarray:
-    """Per-layer std of the entropy under token-resampling within the session (the noise floor)."""
+def bootstrap_noise(ids: np.ndarray, experts: int, draws: int, rng: np.random.Generator,
+                    take: int = 0) -> np.ndarray:
+    """Per-layer std of the entropy under token-resampling within the session (the noise floor).
+
+    `take=0` resamples the session's own token count; a positive `take` resamples that many tokens,
+    so the floor can be read at the same budget as the sample-size-controlled comparison.
+    """
     layers, tokens, _ = ids.shape
+    size = tokens if take <= 0 else min(take, tokens)
     H = np.empty((draws, layers))
     for d in range(draws):
-        idx = rng.integers(0, tokens, size=tokens)
+        idx = rng.integers(0, tokens, size=size)
         sub = ids[:, idx, :]
         for l in range(layers):
             H[d, l] = entropy(np.bincount(sub[l].ravel(), minlength=experts))
@@ -200,12 +206,15 @@ def main() -> int:
     rng = np.random.default_rng(17)
     subs = np.stack([subsampled_entropy(per_session[n]['ids'], experts, SUBSAMPLE_TOKENS, 40, rng) for n in names], axis=1)
     noise = np.stack([bootstrap_noise(per_session[n]['ids'], experts, BOOTSTRAP, rng) for n in names], axis=1)
+    # Same floor at the sample-size-controlled budget, so the ratio below is matched to `subs`.
+    noise_matched = np.stack([bootstrap_noise(per_session[n]['ids'], experts, BOOTSTRAP, rng, SUBSAMPLE_TOKENS)
+                              for n in names], axis=1)
     conc_corr = spearman(pooled['entropy'], pooled['top_share'])
 
     def rng_str(v):
         return f'{v.min():.3f}..{v.max():.3f}'
 
-    print(f'sessions: {", ".join(f"{n}({per_session[n]["tokens"]} tok)" for n in names)}')
+    print(f'sessions: ' + ', '.join(f"{n}({per_session[n]['tokens']} tok)" for n in names))
     print(f'layers={layers} experts={experts} top_k={read_trace(sorted(glob.glob(args.traces))[0]).header["top_k"]} '
           f'max entropy=log2({experts})={math.log2(experts):.4f} bits')
     print()
@@ -220,16 +229,26 @@ def main() -> int:
     print(f'  long-group mean vs short-group mean layer ordering: Spearman={group_spearman:.3f}')
     print(f'sample-size-controlled (T={SUBSAMPLE_TOKENS}): across-layer range={rng_str(subs.mean(axis=1))} '
           f'(R={subs.mean(axis=1).max()-subs.mean(axis=1).min():.4f}), per-layer across-session std mean={subs.std(axis=1).mean():.4f}')
-    print(f'within-session bootstrap noise (T={per_session[names[0]]["tokens"]}-ish): '
+    print(f'within-session bootstrap noise (native T): '
           f'per-layer std mean={noise.mean():.4f}, max={noise.max():.4f} bits')
+    print(f'within-session bootstrap noise (T={SUBSAMPLE_TOKENS}): '
+          f'per-layer std mean={noise_matched.mean():.4f}, max={noise_matched.max():.4f} bits')
     print(f'pairwise Spearman of layer entropy across sessions: mean={np.nanmean(pairwise):.3f}, '
           f'min={np.nanmin(pairwise):.3f}, max={np.nanmax(pairwise):.3f} (of {len(pairwise)} pairs)')
     print(f'split-half test-retest Spearman (first vs second half, per session): '
           f'mean={np.nanmean(split_half):.3f}, min={np.nanmin(split_half):.3f}, max={np.nanmax(split_half):.3f}')
     print(f'entropy vs pooled top-64 share: Spearman={conc_corr:.3f}')
-    print(f'entropy range / per-layer across-session std = '
-          f'{(layer_mean.max()-layer_mean.min())/layer_std.mean():.2f}x')
-    print(f'entropy range / bootstrap noise = {(layer_mean.max()-layer_mean.min())/noise.mean():.2f}x')
+    print(f'entropy ranges: pooled={pooled["entropy"].max()-pooled["entropy"].min():.4f} bits, '
+          f'layer-mean={layer_mean.max()-layer_mean.min():.4f} bits')
+    print(f'entropy range / per-layer across-session std (layer-mean range) = '
+          f'{(layer_mean.max()-layer_mean.min())/layer_std.mean():.2f}x (pooled range: '
+          f'{(pooled["entropy"].max()-pooled["entropy"].min())/layer_std.mean():.2f}x)')
+    print(f'entropy range / bootstrap noise (native T, layer-mean range) = '
+          f'{(layer_mean.max()-layer_mean.min())/noise.mean():.2f}x')
+    print(f'entropy range / bootstrap noise (T={SUBSAMPLE_TOKENS}, layer-mean range) = '
+          f'{(layer_mean.max()-layer_mean.min())/noise_matched.mean():.2f}x')
+    print(f'entropy range / bootstrap noise (T={SUBSAMPLE_TOKENS}, pooled range) = '
+          f'{(pooled["entropy"].max()-pooled["entropy"].min())/noise_matched.mean():.2f}x')
     print()
     print('| layer | pooled H | ' + ' | '.join(f'{n} H' for n in names) +
           ' | mean H | std | pooled top-64 | pooled distinct |')
@@ -279,6 +298,9 @@ def main() -> int:
                 'subsample_session_std_mean': float(subs.std(axis=1).mean()),
                 'bootstrap_noise_mean': float(noise.mean()),
                 'bootstrap_noise_max': float(noise.max()),
+                'bootstrap_noise_matched_mean': float(noise_matched.mean()),
+                'bootstrap_noise_matched_max': float(noise_matched.max()),
+                'noise_budget_tokens': int(SUBSAMPLE_TOKENS),
                 'spearman_mean': float(np.nanmean(pairwise)),
                 'spearman_min': float(np.nanmin(pairwise)),
                 'spearman_max': float(np.nanmax(pairwise)),
