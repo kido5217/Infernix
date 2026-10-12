@@ -202,6 +202,10 @@ only when that work is in scope. Install or upgrade dependencies only when the t
 Create commits only when requested. Use Conventional Commit subjects with concise lowercase types
 such as `feat`, `fix`, `perf`, `bench`, `test`, `build`, `refactor`, `docs`, or `chore`.
 
+Commits land through PRs, never directly on `main`: branch from `main`, commit, push the branch, open
+a PR, squash-merge, then update `main` with `git pull --rebase`. The agent is authorized to squash-merge
+its own PRs without asking first.
+
 ## Agent skills
 
 ### Issue tracker
