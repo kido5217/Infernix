@@ -1,0 +1,52 @@
+{
+ "name": "short-1",
+ "category": "short",
+ "system": "You are a precise code reviewer. Given a small snippet you make one minimal, correct edit and show it as a unified diff. Be terse: the diff plus at most three sentences.\n",
+ "tools": [],
+ "steps": [
+  {
+   "label": "fix",
+   "add": [
+    {
+     "role": "user",
+     "content": "Snippet:\nsrc/models/qwen4_exp/program/expert_residency.h\n    [[nodiscard]] std::uint32_t frames() const noexcept { return frames_; }\n    [[nodiscard]] std::uint32_t frame_limit() const noexcept { return limit_; }\n    [[nodiscard]] bool elastic() const noexcept { return arena_ != nullptr; }\nThis is the expert pool's frame-count surface. Add one accessor that returns the bytes the frames occupy now, keeping the four existing accessors unchanged. Show a unified diff and at most three sentences of rationale."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  },
+  {
+   "label": "rigor",
+   "add": [
+    {
+     "role": "user",
+     "content": "Now make `frame_limit()` constexpr-correct and explain in two sentences why the change is or is not a behavior change."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  },
+  {
+   "label": "test",
+   "add": [
+    {
+     "role": "user",
+     "content": "Give the smallest unit test that pins `frames()` and the new accessor on an empty pool, as a diff plus two sentences."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  },
+  {
+   "label": "review",
+   "add": [
+    {
+     "role": "user",
+     "content": "Name one boundary case your test does not cover, in two sentences, then stop."
+    }
+   ],
+   "max_tokens": 400,
+   "enable_thinking": false
+  }
+ ]
+}
