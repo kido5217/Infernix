@@ -1,12 +1,13 @@
 # QSA pooled-index, selection and engine-score capture (ticket #40)
 
 Recorded data for the map "bit-plane QSA index scan (issue #5 execution)" and the pre-registration
-(issue #39, rev 2): the pooled QSA index-key plane as the engine stores it, the index query the scan
+(issue #39, rev 3): the pooled QSA index-key plane as the engine stores it, the index query the scan
 consumed, the full-BF16 top-512 block selection, and **the engine's own FP32 scores** — at ≥ 128K
 context and at a smaller 16K context. The capture hook lives on the throwaway branch
 `proto/qsa-index-capture`, is off by default, and is never merged.
 
-Everything here is a record, not an analysis. Rev 2's baseline A0 is the engine's own numbers, so an
+Everything here is a record, not an analysis. The pre-registration's baseline A0 is the engine's own
+numbers, so an
 offline reader must reconstruct `score_b` from `pooled.bin` + `index_q.bin` and compare it against
 `scores.bin`, not against a reimplementation. `verify_capture.py` does exactly that and reports the
 max absolute and relative difference.
@@ -21,12 +22,15 @@ max absolute and relative difference.
 | `manifest-16k.txt`, `manifest-140k.txt` | **Run A** (pre-extension): planes/queries/selections |
 | `manifest-scores-16k.txt`, `manifest-scores-140k.txt` | **Run S**: the same captures re-recorded with the engine's FP32 scores |
 | `manifest-eager-16k.txt`, `manifest-eager-140k.txt` | **Run E**: eager runs that cover all 13 planes and ≥ 8 steps at ≥ 128K |
+| `manifest-*.commit.txt` | the engine revision behind each manifest (the manifests stay data-only) |
 | `verify_capture.py` | recomputes scores/ids from a capture and checks them against the engine's |
 | `verify_repro.py` | checks that one capture root's content files reappear byte-identically under another |
 | `sample/` | small committed copies of real capture files (see "Sample") |
 
-Each manifest is a list of `sha256  bytes  relpath` for every file of its run. The captures are not
-committed; they live on this host at `/home/kido/network/projects/Infernix/out/qsa-index-capture/`:
+Each manifest is a list of `sha256  bytes  relpath` for every file of its run; its sibling
+`manifest-<name>.commit.txt` records the engine revision and the commit that was checked out when the
+run was captured. The captures are not committed; they live on this host at
+`/home/kido/network/projects/Infernix/out/qsa-index-capture/`:
 
 | run | contexts | where |
 |---|---|---|
@@ -48,7 +52,8 @@ committed; they live on this host at `/home/kido/network/projects/Infernix/out/q
   (`verify_repro.py` reports this, and the per-file check is the manifest comparison).
 - **Run E** re-ran with `INFERNIX_QSA_CAPTURE_EAGER=1` and `max_tokens 128/64`, so the rounds the
   CUDA graph owns also run in the open. It covers **all 13 planes** (12 QSA attention layers + the
-  MTP block) and, at ≥ 128K, **17 steps** — rev 2 §7 rule 9. Each selection carries its scores.
+  MTP block) and, at ≥ 128K, **17 steps** — pre-registration §7 rule 9. Each selection carries its
+  scores.
 
 | | Run A (16K / ≥128K) | Run S (16K / ≥128K) | Run E (16K / ≥128K) |
 |---|---|---|---|
@@ -58,6 +63,9 @@ committed; they live on this host at `/home/kido/network/projects/Infernix/out/q
 | distinct planes | 13 / 13 | 13 / 13 | 13 / 13 |
 | files | 1836 / 1061 | 1958 / 1133 | 4200 / 3640 |
 | bytes | 1,068,783,092 / 1,907,724,940 | 2,291,109,932 / 2,605,523,308 | 2,796,149,999 / 5,854,531,186 |
+
+The six manifests hold **13,828** entries in total — 11,782 content files and 2,046 `meta.txt` — and
+every entry re-hashes clean against its recorded sha256 and byte count.
 
 ## Prompts and contexts
 
@@ -138,7 +146,9 @@ same pointer across a run, so plane and selection captures (and the MTP plane) c
   selection's **last group** (the group `qsa_select_scores` exposes). The group is the last
   `min(columns, 128)` columns of the call: `scores_group_begin … columns-1`. Group column `c`
   (absolute column `scores_group_begin + c`) holds block `b` at `scores[c·scores_stride + b]` for
-  `b < its complete block count`. With `--max-context 147456`, `scores_stride = 36896` floats.
+  `b < its complete block count`. `scores_stride = (max_context/ratio + 1 + 31)/32*32`
+  (`src/ops/qsa/qsa_select.cu:794`) = 36896 floats with `--max-context 147456`; the `+1` reserves the
+  block at `max_context`, and `max_context/ratio` alone (36864) is already a multiple of 32.
 - The pooled key of block `b` is 128 wide: slot `s` (0..3) holds `key[32·s + lane]` of token
   `4·b + s`, i.e. `key[32·s + lane] = bf16(pooled.bin at page (4b+s)>>6)[slots·((4b+s)&63) + lane]`.
 
@@ -155,7 +165,7 @@ same pointer across a run, so plane and selection captures (and the MTP plane) c
 | plane | BF16 `[Di/R, 64, 1, pages]` = `[32, 64, 1, pages]` |
 | bytes per token per layer | 64 (one 128-wide BF16 key per 4-token block) |
 | bytes per block per layer | 256 |
-| score stride | 36896 floats (max_context/ratio rounded up to a 32-float row) |
+| score stride | 36896 floats = `(max_context/ratio + 1 + 31)/32*32` at `--max-context 147456` (`src/ops/qsa/qsa_select.cu:794`) |
 
 ## Provenance
 
@@ -166,6 +176,13 @@ same pointer across a run, so plane and selection captures (and the MTP plane) c
     `07e1889f188649cbe03c5f45c9f6f00f0b91c0891ad498067dd33b7ac0c9119d`
   - `Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00003-of-00003.infernix`
     `99bcafd5a97f53f0e1cd9e24b9dd6152154722d048519534a0ed314a8339139f`
+- Engine revision: every capture was produced by the `proto/qsa-index-capture` branch tree, never
+  `main` (`main` was `1e2eda5b131bff81a225c2d3c8088c94b54e4e08`). Run A was built from the tree
+  committed as `d37ae276cdd1cdcebb93b6b75abc2bcac0a4b4a2` (the branch had `1e2eda5b` checked out while
+  the hook was still uncommitted); Runs S and E from the tree committed as
+  `69fcf7d33b7fccad74f925dabbee3fa70fe47ad5` (with `51601ea280c51d5e206fc3903004df197428476c` checked
+  out while the score and eager changes were uncommitted). Each manifest has a sibling
+  `manifest-<name>.commit.txt` recording its revision.
 - Hardware/toolchain: NVIDIA GeForce RTX 5090, CUDA 13.1 (`sm_120a`), `nix develop .`
   (cmake 4.1.6, Python 3.13, ninja).
 - Sampling: `temperature 0.0`, `max_tokens` 8 (Runs A/S) and 64 (≥128K Run E) / 128 (16K Run E) —
@@ -187,10 +204,14 @@ build/apps/infernix-serve \
 
 Deviations from the deployed unit `infernix-qwen38-flash-next`
 (`nixos-configs/users/kido/llm.nix`): `--max-context 1048576 → 147456` (the capture uses 141,703
-prompt tokens + generated), `--max-concurrency 4 → 1`, port `8828 → 884x`, and `--no-thinking` added
-while `--vision`, `--preserve-thinking`, `--reasoning-loop`, `--default-thinking-budget`,
-`--request-log-jsonl`, `--pending-timeout-ms` and `--media-cache-mib 2048` were dropped. Everything
-else matches the unit.
+prompt tokens + generated), `--max-concurrency 4 → 1`, `--max-pending-requests 64 → 4`,
+`--media-cache-mib 2048 → 512`, and port `8828 → 8841..8849`. `--no-thinking` was added, and
+`--vision`, `--preserve-thinking`, `--reasoning-loop`, `--default-thinking-budget`,
+`--request-log-jsonl` and `--pending-timeout-ms` were dropped. Everything else — the artifact and
+n-gram volume paths, host, model id, KV dtype, `--rope-yarn-factor`, `--prefill-chunk`, `--spec mtp`,
+`--draft-tokens`, `--lm-head-draft` and `--expert-ram-mib` — matches the unit. The capture runs the
+locally built `build/apps/infernix-serve` rather than the unit's packaged `pkgs.infernix` binary,
+because the capture hook is not in the packaged build.
 
 ## Reproduce
 
@@ -224,25 +245,65 @@ curl -s -H 'content-type: application/json' \
 - `selection-decode-16k/` — a complete 16K decode selection **with its `scores.bin`**
   (`columns=1`, `max_position=22439`, 5610 complete blocks). `verify_capture.py` runs on this
   directory and reports both the score difference and the reproduced 512 ids.
-- `selection-mtp-warmup-16k/` — a complete width-1 draft-step selection with scores (the MTP plane).
+- `selection-mtp-warmup-16k/` — the MTP plane's width-1 draft-step capture at 16K. It is a **dense
+  short-circuit** capture: with `complete_blocks 3 ≤ top_blocks 512` the engine takes the dense path,
+  so `counts.bin = -1`, `selected.bin` is never written and `scores.bin` is unwritten scratch memory
+  (its first floats are garbage). It is kept only as the record of that case; do not read it as a
+  selection with scores.
 - `selection-mtp-140k/` — a complete **MTP selection at ≥ 128K** (`position=141706`, width 1, 35426
-  blocks): every file except `pooled.bin`, which is 9 MiB and stays on the host (its sha256 is in
-  `manifest-eager-140k.txt`).
+  blocks), `pooled.bin` (9 MiB) included with the rest; its sha256 is in `manifest-eager-140k.txt`.
+  The directory is complete, so `verify_capture.py` runs on it standalone.
 - `selection-140k/meta.txt`, `plane-140k/meta.txt` — the metas of Run A's ≥128K selection and plane.
 
 ## Validation
 
 `verify_capture.py CAPDIR [n_columns]` recomputes `score_b` from `pooled.bin` + `index_q.bin`, compares
-it against the engine's `scores.bin`, and checks the recorded top-512 against the recomputed one:
+it against the engine's `scores.bin`, and checks the recorded top-512 against the recomputed one. Dense
+columns (`counts = -1`) are excluded from both checks and counted as excluded. For every checked column
+the boundary gap `|s(engine's last selected) − s(engine's first rejected)|` is computed, and a top-512
+mismatch is classified **explained** when that gap is below the column's measured score error and
+**unexplained** otherwise; a mismatch in a score-less run is **unclassified**. The score error is the
+max absolute difference and the max column-scaled relative difference `|Δ| / (max − min)` of the column.
 
-| capture | blocks | columns | max abs diff | max rel diff (elementwise / column-scaled) | ids exact-set |
+| capture | blocks | cols checked | max abs diff | max rel diff (elementwise / column-scaled) | ids exact-set |
 |---|---|---|---|---|---|
-| `scores-140k/selections/step_02/s_001` | 33,792 | 4 | 2.651e-06 | 3.801e-07 / 1.906e-07 | 4/4 |
-| `scores-16k/selections/step_04/s_111` | 5,610 | 1 | 1.131e-06 | 3.381e-07 / 8.412e-08 | 1/1 |
-| `140k-eager/selections/step_04/s_064` (MTP) | 35,426 | 1 | 3.268e-06 | 3.423e-07 / 1.936e-07 | 1/1 |
+| `scores-140k/selections/step_02/s_001` | 33,792 | 4 | 2.651e-06 | 3.801e-07 / 1.970e-07 | 4/4 |
+| `scores-16k/selections/step_04/s_111` | 5,610 | 1 | 1.131e-06 | 3.381e-07 / 8.584e-08 | 1/1 |
+| `140k-eager/selections/step_04/s_064` (MTP) | 35,426 | 1 | 3.268e-06 | 3.423e-07 / 2.449e-07 | 1/1 |
 
-Every checked column is within `1e-6` relative (rev 2 §1's fidelity bound), and the recomputed
-top-512 equals the engine's selected set exactly on every checked column.
+`verify_capture.py --sweep out/qsa-index-capture 8` runs every selection capture (up to 8 leading
+columns each, the single-capture default) and prints one row per manifest:
+
+```
+manifest         captures ids-chk  exact  expl unexpl unclass  dense  near  max|dScore| max col-scaled
+------------------------------------------------------------------------------------------------------
+140k                   72     408    407     0      0       1      0     0          n/a            n/a
+140k-eager            260     812    811     1      0       0      0     2    3.930e-06      3.369e-07
+16k                   122     576    575     0      0       1    230     0          n/a            n/a
+16k-eager             300     987    986     1      0       0    230     1    3.892e-06      4.284e-07
+scores-140k            72     408    407     1      0       0      0     2    3.930e-06      3.249e-07
+scores-16k            122     576    575     1      0       0    230     1    3.397e-06      4.284e-07
+```
+
+`ids-chk` counts non-dense columns checked, `dense` the dense columns excluded, `near` the columns
+whose boundary gap is within the measured error, and `unclass` the mismatches in the score-less Run A.
+This sweep samples 8 columns per capture; pre-registration §3.1's agreement is over every captured
+column.
+
+Every checked column is within `1e-5` absolute and `1e-6` column-scaled relative (the pre-registration's
+fidelity bound; the sweep maxima are 3.930e-06 and 4.284e-07). The sweep finds **two** near-tie id
+flips, both **explained** and neither unexplained:
+
+- `scores-16k/selections/step_02/s_089`, absolute column 2: the engine selects block 1011 and rejects
+  378, the numpy recompute the reverse; boundary gap 6.743e-07 against a 2.674e-06 score error.
+- `scores-140k/selections/step_02/s_006`, absolute column 7: the engine selects 21604 and rejects
+  19086, the recompute the reverse; the recomputed scores of the two are exactly equal (gap 0) against
+  a 3.306e-06 score error.
+
+Both columns lie outside their capture's scored last group, so the capture's maximum measured error is
+the classification threshold. Both flips recur in Run E and, as **unclassified** (no scores), in Run A;
+aside from them the recomputed top-512 equals the engine's selected set on every checked non-dense
+column.
 
 ## Inertness
 
@@ -256,7 +317,7 @@ With `INFERNIX_QSA_CAPTURE` unset nothing is copied, no file is written and `rep
 - The 16K request with the hook enabled and disabled produced the same response (`content` and
   `usage` equal: `input_tokens 22433`, `output_tokens 8`).
 
-## The MTP attempt (rev 2 §7 rule 9)
+## The MTP attempt (pre-registration §7 rule 9)
 
 **No existing flag or environment variable disables CUDA graphs for this model.** Evidence:
 
@@ -277,9 +338,14 @@ With `INFERNIX_QSA_CAPTURE` unset nothing is copied, no file is written and `rep
 **What was done instead:** a new off-by-default switch, `INFERNIX_QSA_CAPTURE_EAGER=1`, makes
 `ProgramImpl::replay` run its body eagerly instead of capturing/replaying it. It executes the
 engine's own kernels, not an offline reimplementation — the captured selections and scores are the
-engine's. With it, Run E covers all 13 planes: at ≥128K, 16 of its 17 steps carry 13 distinct planes,
-including MTP width-1 selections (e.g. `140k-eager/selections/step_04/s_064`, position 141706,
-35,426 blocks, validated above).
+engine's. With it, Run E covers all 13 planes. At ≥128K its plane captures exist for 15 of its 17
+steps, 14 of them carrying 13 distinct pooled planes (`step_02`…`step_15`) and `step_16` carrying 6;
+counting the selections' distinct `pooled_ptr` instead gives 16 of 17 steps (all but `step_02`, which
+carries 12). At 16K, 12 of the 13 plane-captured steps carry 13 planes and `step_13` carries 3 (15 of
+17 by selection `pooled_ptr`). Pre-registration §7 rule 9 — ≥ 8 steps and all 13 planes — is met at
+both contexts: 17 steps, 13 distinct pooled planes by `pooled_ptr`. Run E also includes MTP width-1
+selections (e.g. `140k-eager/selections/step_04/s_064`, position 141706, 35,426 blocks, validated
+above).
 
 Limit of that evidence: Run E's decode-round schedule is not identical to Run A's (Run A captured
 only the first eager execution of each graph slot; Run E runs them all), so 25 (16K) and 24 (≥128K)
