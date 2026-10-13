@@ -1,11 +1,13 @@
 {
   "protocol": "kido5217/Infernix issue #30 pre-registration rev 5",
-  "generated_at": "2026-10-13T05:26:23Z",
+  "generated_at": "2026-10-13T05:59:37Z",
   "environment": {
     "python": "3.13.15",
     "torch": "2.11.0",
     "numpy": "2.4.4",
-    "git_sha": "40711a3dc92e2d563f1421f4621b041bd24b5fc2"
+    "git_sha": "79e1f4024376348b5d849886bbe7a342a7f311c0",
+    "git_short_sha": "79e1f402",
+    "git_dirty": false
   },
   "reproduction": {
     "python_executable": "/nix/store/l4kls1s38x4zfi4bhfcpyakagc6ncxxz-python3-3.13.15-env/bin/python3",
@@ -92,7 +94,7 @@
     "S1/S2 arm weight divisors use the FP64 source amax (BF16 values widened, or the exact NVFP4 decode), matching pre-registration table 1, which prints the amax at full precision because the divisor is computed from it.",
     "Activation provenance fallback: the reported run uses the forward capture; the --synthetic path is a fixed-seed (seed 0) standard-normal batch rescaled per gating layer to the S2 input_scale's associated activation absmax 448*6/g, recorded but not exercised.",
     "Reported divisors: every arm record carries the actual per-matrix weight divisor (its binary32 stored value) and the target it was derived from, plus the same for the activation divisor, so the divisor choice is auditable per matrix and not only named as a rule.  Both come from weight_divisor(amax, target); the value is already binary32 and is stored verbatim.",
-    "Self-description: the `reproduction` block records the exact capture, self-check and report commands, built from this process's argv and executable plus the module's frozen S2 root, gating layers and prompt tokens (never a hand-typed string); `environment` records the interpreter, torch/numpy versions and the git sha of this checkout.",
+    "Self-description: the `reproduction` block records the exact capture, self-check and report commands, built from this process's argv and executable plus the module's frozen S2 root, gating layers and prompt tokens (never a hand-typed string); `environment` records the interpreter, torch/numpy versions and the git revision of this checkout -- `git_sha` (full), `git_short_sha`, and `git_dirty`, True when `git status --porcelain` reported any change relative to HEAD other than this tool's own report artifacts (they are output, not generating code, so they are excluded from the check).  The committed reports were generated from a tree whose only change was those artifacts, so `git_dirty` is False and `git_sha` names the exact committed revision of this module that ran.",
     "Alpha-fold attribution (G3/X1).  `fold_relative_l2` is the fold's own re-rounding loss: the relative L2 distance between the folded representation (alpha_inv multiplied into, and re-rounded within, the stored E4M3 block scale) and the same representation with alpha_inv applied exactly.  `e_no_fold` re-scores the arm with the fold disabled, i.e. alpha_inv carried as an exact separate per-output-row weight scale instead of folded into the block scale; `e - e_no_fold` isolates the fold's contribution to G3's primary metric.  The top-level `g3_fold_diagnostic` summarizes it.  The prototype's earlier causal wording (that the fold's re-rounding loss 'causes' G3's gating loss) is superseded by that measured separation.",
     "Pre-fix sensitivity: `--bcd-variant released` reproduces the committed `\u2026report.bcd-reciprocal.json` by running G3/X1 with the released DualQuant implementation's reciprocal beta init (beta = 1 / sum_i |W_ij|) and E4M3 projection floor 2^-6 in place of the paper's beta_0,j = sum_i |W_ij| and 2^-9 floor.  It changes only G3/X1, is not a candidate arm, and does not gate; `bcd_variant` records which variant was run."
   ],
