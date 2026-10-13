@@ -295,9 +295,10 @@ fidelity bound; the sweep maxima are 3.930e-06 and 4.284e-07). The sweep finds *
 flips, both **explained** and neither unexplained:
 
 - `scores-16k/selections/step_02/s_089`, absolute column 2: the engine selects block 1011 and rejects
-  378, the recompute the reverse; boundary gap 6.743e-07 against a 2.601e-06 score error (the value the
-  documented sweep command reports at its 8-column sample; a 16-column sample reads 2.674e-06, and in
-  exact float64 the recompute selects 1011, agreeing with the engine).
+  378, the recompute the reverse; boundary gap 6.743e-07 against a 2.601e-06 score error (the per-capture 8-column value; the
+  sweep command prints per-manifest aggregates, so run the verifier on the capture directly to see it. A
+  16-column sample reads 2.674e-06, and in exact float64 the recompute selects 1011, agreeing with the
+  engine).
 - `scores-140k/selections/step_02/s_006`, absolute column 7: the engine selects 21604 and rejects
   19086, the recompute the reverse; the recomputed scores of the two are exactly equal (gap 0) against
   a 3.306e-06 score error (in exact float64 the recompute selects 21604, agreeing with the engine).
