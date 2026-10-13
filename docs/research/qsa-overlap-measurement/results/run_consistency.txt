@@ -1,0 +1,8 @@
+16k: reference = 16k-eager (72 prefill chunk captures)
+  16k         : 72 captures; identical selected+counts = 72; missing-vs-ref = 0; extra-vs-ref = 0
+  16k-eager   : 72 captures; identical selected+counts = 72; missing-vs-ref = 0; extra-vs-ref = 0
+  scores-16k  : 72 captures; identical selected+counts = 72; missing-vs-ref = 0; extra-vs-ref = 0
+140k: reference = 140k-eager (36 prefill chunk captures)
+  140k        : 36 captures; identical selected+counts = 36; missing-vs-ref = 0; extra-vs-ref = 0
+  140k-eager  : 36 captures; identical selected+counts = 36; missing-vs-ref = 0; extra-vs-ref = 0
+  scores-140k : 36 captures; identical selected+counts = 36; missing-vs-ref = 0; extra-vs-ref = 0
