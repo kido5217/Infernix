@@ -83,10 +83,11 @@ quantizers"):
 ### 1.3 Index dtype and size in their setup
 
 The store is "a 4-bit copy of K with fp16 block scales, **68 bytes per token per KV head**"
-(§3.2), i.e. 4 bits × 128 channels = 512 bits plus 16 bits per 64 tokens per channel of scale = 544
-+ 4 = 68 bytes. The baselines' indexes: Double Sparsity label cache **17 B/token** (32 channels at
-4 bits), a 32-byte-per-token ShadowKV-style landmark index (fp16 mean key per 8-token block, 256
-bits), and a 2-bit all-channel thumbnail (288 bits) (§3.2, §3.6, §5.1). The paper charges the full
+(§3.2), i.e. 512 code bits (4 bits × 128 channels) plus 32 scale bits (128 channels × 16 bits / 64
+tokens) = 544 bits = 68 bytes. The baselines' indexes: Double Sparsity label cache **17 B/token**
+(32 channels at 4 bits), a 32-byte-per-token ShadowKV-style landmark index (fp16 mean key per
+8-token block, 256 bits), and a 2-bit all-channel thumbnail (288 bits) (§2, §4 byte accounting). The
+paper charges the full
 68 B/token in its memory comparison and says the store "becomes free only in a stack whose K cache
 is already 4-bit and channel-major", a path it "ha[s] not built or measured" (§7 "Memory"). So in
 their setup the index is a **separate copy**, made from the K cache keys, keyed by channel and by
@@ -238,7 +239,7 @@ This section is *entirely* about host placement and has no device-resident targe
 - The plane-budget ablation is **A4** (§6): "The 2-bit thumbnail reads every channel at two planes,
   288 bits per token. Its error … is reached by the water-filled read at **28–148 bits** on all 7
   settings … Uniform depth spends bits on channels that carry no score for the query." Fixed-budget
-  sweeps (mean 40/48/64/80/128) appear in Tables 14–16; A1 (§6, Table 10) is flat vs per-layer
+  sweeps (mean 40/48/64/80/128) appear in Tables 14–15; A1 (§6, Table 10) is flat vs per-layer
   budget; B1 (Appendix D, Table 19) shows the *store* precision (uniform 4-bit vs 8-bit vs
   rate-allocated 128-bit) barely moves error at a fixed read budget (0.0052 at 56 bits for both
   4- and 8-bit stores).
@@ -271,6 +272,11 @@ Abstract, last sentence:
 > of the bandwidth the nibble scans reach. The 32-channel scan's kernel time is **0.73× ours at 32k
 > and 0.70× at 128k; ours is slower in the kernel despite reading 38% fewer bytes** on these
 > layers."
+
+§7 "Arithmetic per byte" adds the per-bit cost the excerpt omits: "Bit extraction adds one to two
+integer operations per bit read, four times the per-bit cost of a nibble scan." §5.1 states the
+kernel cost in the same terms: "its scan kernel costs about twice SparQ's per byte because it
+extracts bits."
 
 Table 17 (HBM stores, A100, layers 0/1/2/18/30, batch 4×8 KV heads, CUDA graphs, median of 30):
 Fathom 48 (84 bits) scan 0.140 ms at 32k / 0.415 ms at 128k, reaching **75/102 GB/s**; SparQ r=16
@@ -344,7 +350,7 @@ top-512 = budget 2048 / ratio 4 blocks, 13 planes/lane, ≈104 MiB/lane at 128K.
 | Fathom mechanism | § | Transfers to a device-resident BF16 QSA index? |
 |---|---|---|
 | **Channel-major bit-plane layout + exact prefix quantizer** | §3.2, Eq. 2 | **Only as a re-encoding, and only for a uniform integer code.** Infernix's plane is BF16; a BF16 prefix is sign+exponent, which the paper explicitly excludes from the exactness and `4^{-t}` law (§3.2). To get the property you must quantize the pooled key to a uniform 4-bit per-channel code with a per-block scale — a **representation change to the runtime plane**, not a prefix of the existing BF16. The *accuracy* question ("does a `t`-bit prefix keep the selected blocks?") then transfers and is the primary thing to measure. |
-| **Per-query water-filling depth rule** | §3.3, Eq. 3–4 | **The rule transfers and is bandwidth-agnostic**; its objective is `Σ_j g_j 4^{-t_j}` under a bit budget, with no bandwidth term. The inputs map: `g_j = Σ_h (q_j^(h))² Var(k_j)` becomes the QSA indexer's `Σ_h (index_q_h,j)² Var(pooled_k_j)` over the indexer's heads. **But the ReLU changes the error propagation**: the paper's gradient is the identity on all heads; Infernix's score sums `ReLU(·)`, so heads with a negative pre-activation contribute no signal and the effective `g_j` is query- and block-dependent (see §6). Its *reason to exist* — converting byte savings into time — does not transfer: §7 says the planes kernel is arithmetic-bound device-resident ("1.4× slower than a nibble scan"; 0.73×/0.70× at 32k/128k) and "reading fewer bits does not remove multiply-adds". |
+| **Per-query water-filling depth rule** | §3.3, Eq. 3–4 | **The rule transfers and is bandwidth-agnostic**; its objective is `Σ_j g_j 4^{-t_j}` under a bit budget, with no bandwidth term. The inputs map: `g_j = Σ_h (q_j^(h))² Var(k_j)` becomes the QSA indexer's `Σ_h (index_q_h,j)² Var(pooled_k_j)` over the indexer's heads. **But the ReLU changes the error propagation**: the paper's score is a plain `q·k` with no gate (Eq. 3), so (our reading) every head contributes to the error it models; Infernix's score sums `ReLU(·)`, so heads with a negative pre-activation contribute no signal and the effective `g_j` is query- and block-dependent (see §6). Its *reason to exist* — converting byte savings into time — does not transfer: §7 says the planes kernel is arithmetic-bound device-resident ("1.4× slower than a nibble scan"; 0.73×/0.70× at 32k/128k) and "reading fewer bits does not remove multiply-adds". |
 | **Per-layer budget (§3.4)** | §3.4 | Transfers as a tuning choice; needs calibration at the deployment context length (§3.4, A1). |
 | **Basis rule (§3.5)** | §3.5 | The QSA pooled key is **RMSNorm'd** and then RoPE'd, i.e. approximately normalized per block — the same regime in which the paper chooses **raw channels** (Qwen3/QK-norm). So the expected branch is raw, not KLT; but RoPE mixes channel pairs and the pooling already averages 4 tokens, so the channel-variance structure of a *pooled* key is not the same as the raw-key structure the calibration assumes — **unverified from the paper**. |
 | **Host-resident read / gather (§3.6)** | §3.6 | **No target.** The index is device-resident; there are no contiguous host runs to gather. |
@@ -364,8 +370,12 @@ artifacts.
 compares 4-bit planes vs a 4-bit nibble scan, so §7's "no gain" is the statement that *per-query
 read depth* is not a device win. This build's index is **16-bit BF16**, so a move from BF16 to a
 uniform 4-bit per-block code is a **4× compression of bytes and frames at full depth** — a
-magnitude difference the paper never measures, because no baseline in it is 16-bit. Whether that
-compression returns time is a separate question, and the built-reality note already shows the
+magnitude difference the paper never measures: its store-precision ablation varies only
+4-/8-/128-bit stores at a fixed read budget and finds error barely moving (0.0052 at 56 bits for
+both the 4- and 8-bit stores; Table 19), and its fp16 baselines are block/landmark-mean or low-rate
+stores, not an all-channel per-token channel-major 16-bit store, so they do **not** bound a
+BF16→uniform-4-bit change at equal bytes. Whether that compression returns time is a separate
+question, and the built-reality note already shows the
 current scan is latency-dominated (2× time over 16× bytes from 8K→128K) rather than
 bandwidth-bound. So: the paper cannot license a device-resident *time* win, and the byte win of
 going BF16→4-bit is a different claim that must be measured, not inferred from Fathom.
@@ -428,7 +438,8 @@ activation, so the writer `pool_kernel`, the Program's plane allocation, every Q
 ## 7. What I could not establish from the paper
 
 - **No measured cost for the depth-selection step.** The 30-bisection-on-`log θ` search per query
-  group (§3.3) has no latency figure; it is absorbed into "scan kernel" (Table 17). Not derivable.
+  group (§3.3) has no latency figure; the paper never says where it runs — our inference is that it
+  is absorbed into "scan kernel" (Table 17). Not derivable.
 - **The `Var(k_j)` vs `a_{β,j}²` conflation.** §3.3 derives `Σ_j g_j 4^{-t_j}` "with `a_{β,j}²`
   standing in for `Var(k_j)`", but `g_j` as defined (Eq. 3) *contains* a calibration-time
   `Var(k_j)` that is per-channel and shared across blocks, while `a_{β,j}` is per-block. The paper
@@ -473,13 +484,16 @@ activation, so the writer `pool_kernel`, the Program's plane allocation, every Q
    itself to live in the slower tier…"; (§7) "ours is slower in the kernel despite reading 38% fewer
    bytes"; (§8) "With the scan index resident in HBM the method is not faster than the 4-bit channel
    scans"; (§9) "reading fewer bits does not remove multiply-adds." HBM scan kernels: 75–106 GB/s
-   vs 175–282 GB/s for nibble scans (Table 17).
+   vs 148–282 GB/s for nibble scans (Table 17).
 5. **Applicability verdict:** the *encoding accuracy question* ("does a `t`-bit uniform prefix keep
    the selected blocks?") transfers and should be measured; the *depth rule* transfers as a
    bandwidth-agnostic bytes/accuracy tradeoff but not as a device speed mechanism; the *1.67×
    speedup* and all of §5.1/§3.6 rest on the host/PCIe assumption and **do not** transfer. Because
-   this build's index is BF16 16-bit and Fathom's baselines are all 4-bit, Fathom's HBM control does
-   **not** bound the BF16→4-bit compression — that is a separate, unevidenced claim.
+   this build's index is BF16 16-bit while the paper never varies an all-channel per-token 16-bit
+   store against a 4-bit one (its store ablation over 4-/8-/128-bit stores holds the read budget
+   fixed and barely moves error, Table 19; its fp16 baselines are block/landmark-mean or low-rate
+   stores), Fathom's HBM control does **not** bound the BF16→4-bit compression — that is a separate,
+   unevidenced claim.
 
 **Where the paper's claims depend on the host-resident assumption the map must account for:** the
 cost model (Eq. 1), the entire offload harness (§4), the bits→time conversion (§5.1, Table 2's
