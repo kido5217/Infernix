@@ -834,6 +834,21 @@ def _report(args):
                              f"worst {worst:.4f} {'PASS' if c2 else 'FAIL'} | "
                              f"spread {spread:.4f} {'PASS' if c3 else 'FAIL'} | "
                              f"curve reported PASS | 80 vs 256 = 3.2x")
+                # weighting robustness: layer-averaged and step-averaged means
+                lc, ls = {}, {}
+                with open(os.path.join(args.out, f"rows_{ctx}_fixed.tsv")) as rf:
+                    next(rf)
+                    for ln in rf:
+                        a, layer, step, n, inter, rank, se, sen = ln.split("\t")
+                        if a != "A1_4" or float(n) == 0:
+                            continue
+                        lc.setdefault(int(layer), [0.0, 0.0])
+                        lc[int(layer)][0] += float(inter); lc[int(layer)][1] += float(n)
+                        ls.setdefault(int(layer), []).append(float(inter) / (512.0 * float(n)))
+                laymean = sum(v[0] / (512 * v[1]) for v in lc.values()) / len(lc)
+                stepmean = sum(sum(v) / len(v) for v in ls.values()) / len(ls)
+                lines.append(f"A1(4) weighting robustness: column-weighted {mean:.4f} | "
+                             f"layer-averaged {laymean:.4f} | step-averaged {stepmean:.4f}")
         if ab is not None and a3_layer is not None and per_layer is not None:
             t_star = int(ab["A4"].split("_")[1])
             _, a4_mean = _arm_layer_stats(per_layer, ab["A4"])

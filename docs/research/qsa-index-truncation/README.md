@@ -105,6 +105,13 @@ At ≥128K **A1(4) does not clear the bar**: mean (0.9213) is below 0.95 and the
 (0.8951) is below 0.90. The 3.2× byte cut is real; the accuracy bar is not met at the adopted
 context.
 
+**Weighting robustness.** The mean above is column-weighted (`Σ|S∩S0| / Σm0` over all (layer, step)
+rows). Averaging the 13 per-layer means instead gives **0.9193** (140K) / **0.9511** (16K), and
+weighting each step equally gives **0.9296** / **0.9458**. The 140K verdict — fail on conditions 1
+(mean < 0.95) and 2 (a layer mean < 0.90) — holds under all three; spread stays ≤ 0.10 under all
+three. (At 16K the step-equal variant would put the mean at 0.9458; 16K is the trend, not the bar.
+Every weighting is re-derivable from `raw/per_layer_<ctx>.tsv` and `raw/rows_<ctx>_fixed.tsv`.)
+
 ### Budget curve (§3.1–3.3, every layer in `raw/per_layer_*.tsv`, every column in `raw/per_column_*.npz`)
 
 Cross-layer mean / worst-layer / spread, rank64 and score error (all means over every non-dense

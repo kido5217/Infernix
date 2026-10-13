@@ -14,6 +14,7 @@ A2_16     1.0000   1.0000   0.0000  256.00   1.00x
 A3_V1     0.9536   0.9209   0.0427   80.00   3.20x
 A3_V2     0.9536   0.9209   0.0427   80.00   3.20x
 BAR A1(4): mean 0.9536 PASS | worst 0.9209 PASS | spread 0.0427 PASS | curve reported PASS | 80 vs 256 = 3.2x
+A1(4) weighting robustness: column-weighted 0.9536 | layer-averaged 0.9511 | step-averaged 0.9458
 A3 A3_V1: mean 0.9536 vs A1_4 0.9536 (delta +0.0000); bits 640.0 vs 640.0 (equal); gate FAIL
 A3 A3_V2: mean 0.9536 vs A1_4 0.9536 (delta +0.0000); bits 640.0 vs 640.0 (equal); gate FAIL
 
@@ -32,5 +33,6 @@ A2_16     1.0000   1.0000   0.0000  256.00   1.00x
 A3_V1     0.9213   0.8951   0.0510   80.00   3.20x
 A3_V2     0.9213   0.8951   0.0510   80.00   3.20x
 BAR A1(4): mean 0.9213 FAIL | worst 0.8951 FAIL | spread 0.0510 PASS | curve reported PASS | 80 vs 256 = 3.2x
+A1(4) weighting robustness: column-weighted 0.9213 | layer-averaged 0.9193 | step-averaged 0.9296
 A3 A3_V1: mean 0.9213 vs A1_4 0.9213 (delta +0.0000); bits 640.0 vs 640.0 (equal); gate FAIL
 A3 A3_V2: mean 0.9213 vs A1_4 0.9213 (delta +0.0000); bits 640.0 vs 640.0 (equal); gate FAIL
