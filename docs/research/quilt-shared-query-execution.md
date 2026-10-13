@@ -4,8 +4,8 @@ Facts for map **#45** and task **#47** ("QUILT mechanism: the overlap metric, se
 cascaded sharing"). The paper is **arXiv:2610.11134v1, 2026-10-08, Huawei** (Zhenduo Zhao, Qihui Zhou
 et al.).
 
-**What I read.** The **full HTML** at `https://arxiv.org/html/2610.11134v1` (371 lines extracted:
-abstract, §1–6, references), not the abstract. All section, equation and figure numbers below are
+**What I read.** The **full HTML** at `https://arxiv.org/html/2610.11134v1` (whole document: abstract,
+§1–6, references), not the abstract. All section, equation and figure numbers below are
 from that HTML version.
 
 **Our side**, read first: `research/qsa-prompt-overlap-facts` head `30e70f87`
@@ -24,8 +24,8 @@ Labels: **(paper)** = stated by the paper; **(ours)** = established in this repo
   of the Top-K that **all** queries in a group select (`|⋂_{q∈group} S_q| / K`). It is **not** our
   tile-union metric. At group size 2 it reports **>85.91 % (Qasper) / >78.06 % (GovReport)** over all
   layers, >90.03 % in layer 1 (paper §1).
-- The same quantity recomputed on our selections **(new)**: **f(w=2) = 0.648 (16K) / 0.551 (140K)**,
-  falling to 0.235 / 0.112 at w=8. Our adjacent-query intersection is **materially lower** than the
+- The same quantity recomputed on our selections **(new)**: **f(w=2) = 0.6365 (16K) / 0.5501 (140K)**,
+  falling to 0.2152 / 0.1122 at w=8. Our adjacent-query intersection is **materially lower** than the
   paper's. Only our **union** metric is of the paper's magnitude, and it corresponds to the paper's
   *processed-KV reduction*, not its overlap ratio (§1.4).
 - The mechanism **does not change the selection**: SCSD (§3.1) and cascaded sharing (§3.3) are exact
@@ -75,22 +75,29 @@ block ids of `ratio = 4` tokens each):
 ### 1.3 The paper's metric, recomputed on our selections **(new)**
 
 I recomputed the paper's quantity `f(w) = mean_tiles |⋂_{q∈tile} S_q| / 512` from the same
-`selected.bin`/`counts.bin` captures, using the measurement branch's exact conventions (prefill
-captures with `columns ≥ 1000`, keyed by `pooled_ptr`, ordered by `min_position`, dense columns
-excluded). Mean over the 12 layers per context:
+`selected.bin`/`counts.bin` captures, using the measurement branch's conventions exactly — its
+`tile_union_layer` pooling (the mean of the per-tile ratios **within** a layer, then the mean across
+the 12 layers), prefill captures with `columns ≥ 1000`, keyed by `pooled_ptr`, ordered by
+`min_position`, dense columns excluded. The four widths that matter for the decision:
 
-| context | w=2 | w=4 | w=8 | w=16 | w=32 | w=128 | w=512 | w=all |
-|---|---|---|---|---|---|---|---|---|
-| 16K | **0.648** | 0.404 | 0.235 | 0.137 | 0.080 | 0.029 | 0.014 | 0.005 |
-| 140K | **0.551** | 0.256 | 0.112 | 0.058 | 0.029 | 0.006 | 0.003 | 0.002 |
+| context | w=2 | w=4 | w=8 | w=16 |
+|---|---|---|---|---|
+| 16K | **0.6365** | 0.3862 | 0.2152 | 0.1181 |
+| 140K | **0.5501** | 0.2557 | 0.1122 | 0.0579 |
 
-Cross-check: the w=2 values reproduce the branch's `d=1` pairwise overlap (0.648 vs 0.6364 at 16K;
-0.551 vs 0.5448 at 140K). The small gap is tile-remainder handling and layer-averaging; the agreement
-confirms the reading of the two metrics.
+Cross-check: the w=2 values reproduce the branch's `d=1` pairwise overlap (0.6365 vs 0.6364 at 16K;
+0.5501 vs 0.5448 at 140K — the 140K difference is the pairwise figure's own tile set).
+
+**Pooling matters, and one convention is wrong.** Weighting each **chunk** equally instead of pooling
+per tile gives 0.648 / 0.404 / 0.235 / 0.137 at 16K — inflated because chunk 0 has only 2,045 valid
+columns and a small, saturated block pool, so its pairwise overlap is far higher (f(2) = 0.898 on
+layer 0) and an equal-chunk mean lets 2,045 columns outweigh 4,096. At 140K the three chunks are
+nearly equal, so both conventions agree to ≤0.001. Tile-remainder handling moves any of these by at
+most 0.0003.
 
 Method (reproducible; CPU-only, read-only over `out/qsa-index-capture/`): for each tile concatenate
 the tile's `w` columns' 512 ids, `np.unique` with counts, and take the count of values occurring in
-all `w` columns; divide by 512; average over tiles, then over layers.
+all `w` columns; divide by 512; average the tile ratios within a layer, then across the 12 layers.
 
 ```python
 def group_intersection(cols, w):          # cols: (n_valid, 512) int32, ascending per column
@@ -114,9 +121,10 @@ The paper and the measurement branch are **not** measuring the same thing, and n
 2. **Our tile-union ratio** `1 − |⋃_{q∈tile} S_q| / (w·512)` (measurement branch). This is **not** (1).
    For sets of size `K` with common intersection `fK`, `|⋃| ≤ fK + w(1−f)K` gives the bound
    `1 − |⋃|/(wK) ≥ f·(1 − 1/w)`, tight when the query-specific residues are disjoint:
-   - w=2: 16K bound `0.648·0.5 = 0.324` vs measured **0.318**; 140K bound `0.276` vs **0.275** → tight.
-   - w=8: 16K bound `0.206` vs measured **0.704**; 140K bound `0.098` vs **0.587** → the residues
-     overlap heavily, so the union redundancy is far above the intersection bound.
+   - w=2: the bound is an **identity** — `1 − |A∪B|/(2K) = |A∩B|/(2K) = f/2` — so there is no gap to
+explain: with the same pooling, `0.6365/2 = 0.31825` against the measured **0.31821**, exact.
+   - w=8: 16K bound `0.2152·0.875 = 0.188` vs measured **0.704**; 140K bound `0.098` vs **0.587** — the
+     residues overlap heavily, so the union redundancy is far above the intersection bound.
 3. **Paper's processed-KV reduction** (Tables 3, 4). A **fully-recursed cascade processes every distinct
    KV entry exactly once** — Table 1: "No sharing 16 … Cascaded **8**", and the text says 8 "equal to
    the number of distinct KV entries". So — **to first order** (the realized Tables 3/4 also fold in
@@ -216,7 +224,7 @@ selection. Importance-aware clipping is the one mechanism that changes what is a
 | §1 | "We therefore apply *importance-aware clipping*, pruning the lowest-ranked residual entries … This **approximation** further reduces attention-tile execution while introducing **negligible accuracy degradation**." |
 | §3.4 | "masking the padded entries to **preserve exact semantics**"; "This push-down is **exact**"; "This is the **only approximate step** in our tile-aware execution and minimizes accuracy degradation by discarding only low-importance residual entries." |
 | §4.2.1 | "These results confirm that our **exact execution optimizations preserve the original sparse attention semantics**, while the importance-aware clipping … introduces only negligible accuracy variance." |
-| §4.2.1 (accuracy) | Table 2, **21 LongBench datasets**, official per-dataset metric: mean absolute score difference **0.75** (DeepSeek-3.2) / **0.42** (GLM-5.3); mean absolute percentage difference **2.01 %** / **0.90 %**. Largest deltas: musique +2.71, hotpotqa −1.45 (DeepSeek); lcc −0.91, narrativeqa −0.84 (GLM). |
+| §4.2.1 (accuracy) | Table 2, **21 LongBench datasets**, official per-dataset metric: mean absolute score difference **0.75** (DeepSeek-3.2) / **0.42** (GLM-5.3); mean absolute percentage difference **2.01 %** / **0.90 %**. Largest deltas: musique +2.71, hotpotqa −1.45 (DeepSeek); multifieldqa_en +1.00, lcc −0.91, musique −0.85, narrativeqa −0.84 (GLM). |
 | §4.3.3 (fidelity) | Figure 15, cosine similarity of clipped vs unclipped attention output: head-level mean **1.0000** (random 0.9999), **min 0.406** (random 0.312); hidden-level mean **1.0000** (0.9998), **min 0.719** (0.664). |
 
 **Nature of the claim.** The exact steps are argued exact **by construction** (set algebra + masking),
@@ -274,7 +282,7 @@ the evaluation is **not stated in the readable text** (it may sit only in a figu
 - **Selection is exact per query**: top-**512** blocks of **4 tokens** (= 2048 tokens) of the context,
   ids materialized as `selected [512, columns]` i32 + `counts [columns]` (`qsa_select.h:54-57`);
   selection processes columns in groups of `kQsaSelectGroupColumns = 128` (`qsa_select.h:48`), a warp
-  reads 8 pooled keys once and scores up to 16 columns (`qsa_select.h:22-24`). Block-sparsity (2048
+  reads 8 pooled keys once and scores up to 16 columns (`qsa_select.h:20`). Block-sparsity (2048
   tokens/query) equals the paper's **token**-sparsity (Top-2048).
 - **Gather is per query**: one CTA per `(column, kv_head)` (`qsa_prompt.cu:895`), `cp.async` token rows
   in 16-byte chunks (`qsa_prompt.cu:367, 412-413`), each warp sweeping 16-token tiles double-buffered
@@ -290,7 +298,7 @@ the evaluation is **not stated in the readable text** (it may sit only in a figu
   to our **block ids** (512 per column) rather than tokens; the shared/union primitive is the useful part.
 - **The union framing matches our own design intent.** Design §8.10 already specifies, for the prompt
   path, "a tile of queries against the **union of their selected blocks with a per-query mask**. It uses
-  the same tile loaders" (`qwen3_8-flash-next-design.md:1199-1200`), currently **unimplemented**. QUILT
+  the same tile loaders" (`qwen3_8-flash-next-design.md:1200-1201`), currently **unimplemented**. QUILT
   supplies the set-decomposition primitive and the evidence that the overhead is the crux.
 - **The processed-KV / tile-union equivalence** (§1.4) lets us use our measured curve to bound a
   prototype's bankable signal.
@@ -313,7 +321,8 @@ the evaluation is **not stated in the readable text** (it may sit only in a figu
   8 theirs is still "considerable" where ours is 0.24 / 0.11. So the **first cascade level (the
   group-wide shared core) is small for us**; a cascade reaches our overlap only by recursing to small
   subgroups — which is just the union again.
-- **Tuned constants.** `T` (KV entries/tile), `τ = 50 %`, group start 8, Top-2048 are tied to Ascend
+- **Tuned constants.** `T` (KV entries/tile — the paper writes "Let `T` denote" and never gives it a
+  number), `τ = 50 %`, group start 8, Top-2048 are tied to Ascend
   tile shapes and the paper's token-level selection; ours are 16-token warp tiles over 4-token blocks.
 - **Bit-exactness.** Nothing in the paper supports bit-exact equivalence under shared execution. Adopting
   cascaded sharing's multi-level shared-first ordering would **reorder a query's contributions** unless
@@ -377,13 +386,16 @@ underfills tiles — not the first thing to build.
   it).
 - The **group definition** ("neighboring queries"): the axis/adjacency is not stated; I assume
   consecutive sequence positions (matching our consecutive query columns).
+- The **attention tile size `T`** is never given numerically (only "Let `T` denote …"), although `τ = 50 %`
+  is; this matters for adopting the mechanism.
 - The paper does not report **decode**-path behaviour (it targets prefill, §2.1).
 
 ---
 
 ## Provenance
 
-- Paper: arXiv:2610.11134v1, read in full from the HTML (371 lines).
+- Paper: arXiv:2610.11134v1, read in full from the HTML (the extracted-text length depends on the
+  converter, so it is not quoted).
 - Our facts: `research/qsa-prompt-overlap-facts` `30e70f87`; `proto/qsa-overlap-measurement` `b32895e3`.
 - New measurement (§1.3): CPU-only, read-only over `out/qsa-index-capture/` (`16k-eager`, `140k-eager`;
   `selected.bin`/`counts.bin`), the measurement branch's parsing conventions; script described inline in
