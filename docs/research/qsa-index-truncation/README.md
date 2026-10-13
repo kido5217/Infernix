@@ -82,8 +82,13 @@ recomputing `score_b = (1/√Di)·Σ_h ReLU(⟨q_h, key_b⟩)` from the captured
   float32 accumulation-order near-ties, exactly the case rev 4 dropped the rate floor for.
 * The recomputation is a batched (BLAS-order) implementation of the same math; its max error
   differs from the vendored verifier's per-column matmul at the 1e-7 level but stays inside the
-  fixed bound. On every capture checked both ways, ids/exact/explained/unexplained/dense counts are
-  identical (see `raw/fidelity_captures_*.tsv`).
+  fixed bound. `equiv_check.py` re-runs the vendored `verify_capture.analyze(cap, full)` on the 444
+  captures where the per-column verifier is tractable (all decode captures plus named prefill
+  captures) and compares counts: **444/444 agree on every order-independent count** (scored, ids,
+  dense, zero unexplained) and both are within bounds, with **one** capture (140K `step_02/s_032`)
+  differing by a single exact/explained split — the batched FP32 order flips one near-tie that the
+  per-column order resolves exactly, and the flip is *explained*. This is precisely the
+  accumulation-order effect the rev-4 rationale accepts; `raw/equivalence_check.txt` records it.
 
 ## Results
 
@@ -153,10 +158,10 @@ A4 = the smallest A1 `t` clearing the bar; none clears at 140K, and 16K resolves
 calibrated by bits only (§D8): θ = 9.09495e-13.
 
 * At that budget the water-filling degenerates: **every channel takes depth 4 on every column**, so
-  the realized mean bits are exactly 640 and A3's scores equal A1(4)'s **exactly** — V1 and V2 both
-  reproduce A1(4)'s per-column agreement, rank and score error (the probe verified this by scoring
-  the reconstructed keys: `A3 reused-A1(4) columns: 245007/245007` at 16K and `128012/128012` at
-  140K, i.e. the equality was checked, not assumed).
+  the realized mean bits are exactly 640 and A3's scores equal A1(4)'s **exactly**. The probe checked
+  the all-4 condition on every column and then reused A1(4)'s per-column metrics
+  (`A3 reused-A1(4) columns: 245007/245007` at 16K and `128012/128012` at 140K); columns that fail
+  the check would be scored in full, and none did.
 * Therefore A3 beats A4 by `+0.0000` mean agreement at equal bits (640.0 vs 640.0) — below the 0.02
   gate. **A3 does not gate; A4 carries forward** (`raw/report.txt`).
 * A3 V2 (per-group `a²`) is reported and cannot gate; it produced the same numbers as V1 here.
@@ -213,6 +218,7 @@ Full text in `raw/deviations.txt`, written before the numbers were read. Headlin
 |---|---|
 | `truncation_probe.py` | the prototype (stages: `verify-inputs`, `arms`, `a3`, `report`) |
 | `verify_capture.py` | vendored parsing logic (`proto/qsa-index-capture` @ 05f74f1a); parsing reused verbatim |
+| `equiv_check.py` | runs the vendored verifier at full coverage on the tractable captures and checks it against `raw/fidelity_captures_*.tsv` |
 | `manifest-eager-*.txt`, `manifest-eager-*.commit.txt` | vendored input-hash record |
 | `raw/deviations.txt` | deviations, written before results |
 | `raw/report.txt` | the report stage's stdout (curves, bar, A3-vs-A4) |
@@ -220,6 +226,7 @@ Full text in `raw/deviations.txt`, written before the numbers were read. Headlin
 | `raw/per_layer_<ctx>.tsv` | per (arm, layer) agreement / jaccard / rank64 / score error |
 | `raw/per_column_<ctx>_{fixed,a3}.npz` | per-column agreement, rank and score error for every arm |
 | `raw/fidelity_<ctx>.json`, `raw/fidelity_captures_<ctx>.tsv`, `raw/fidelity_mismatches_<ctx>.json` | the fidelity gate |
+| `raw/equivalence_check.txt` | batched fidelity vs the vendored per-column verifier |
 | `raw/a3_budgets_<ctx>.json` | A4 choice, target/realized bits, θ |
 | `raw/input_hashes.txt` | input hashes and the manifest re-hash check |
 | `raw/timing_<ctx>_fixed.json` | prototype CPU time per arm |
