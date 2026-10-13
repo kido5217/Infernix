@@ -79,7 +79,8 @@ order in which a query accumulates its attended tokens (ascending block id, then
 | Prompt selection, per prompt token | 0.20 / 0.45 / 1.74 µs at 8K / 32K / 128K | §19.3.6 `:6604-6606` |
 | One 4,096-column selection (score+select) | 1.119→1.006 ms at 8K; 14.04→11.44 ms at 250K (after Q3) | §19.3.6 `:6637-6639` |
 | QSA `attention_kernel` (FP32 SIMT), per 4,096-token call, late calls ≥100K | 245 ms, 248 ms | §19.3.8 `:7581`, `:7604` |
-| QSA selection per 4,096-token call at 128K | ~85 ms (73 ms after Q3) | §19.3.8 `:7586`, `:7805` |
+| QSA selection per 4,096-token call at 128K | ~85 ms (~86 ms worst) | §19.3.8 `:7586`, `:7805` |
+| QSA **scoring** alone, per late 4,096-token call | 73 ms | §19.3.6 `:6622-6623` |
 | Prefill at 245,760 tokens (int8, no YaRN) | 8.2K tok/s | §19.3.18 `:9033-9035` |
 | pp32k / pp128k prefill wall (after batched copies) | 5.297 s / 17.03 s | §19.3.17 `:8898-8899` |
 
@@ -87,8 +88,9 @@ Modelled, not measured: the per-stage split inside selection (§19.3.6 `:6613-66
 attention's 30–60 ms target (§19.3.8 `:7759`).
 
 **No in-tree measurement separates the prompt gather from its compute.** `infernix_qsa_attention_bench`
-times the whole `qsa_attention` call and `detail::qsa_select` alone, so their difference is
-attention+merge (`bench/ops/qsa_attention_bench.cu:228-236`; `bench/README.md:751-763`). Any dedup win
+times the whole `qsa_attention` call and `detail::qsa_select` alone
+(`bench/ops/qsa_attention_bench.cu:258-263`), so their difference is attention+merge
+(`bench/README.md:751-763`). Any dedup win
 claim therefore needs an Op-bench A/B of the attention stage, ideally with nsys attribution
 (§19.3.6 Q0 used nsys for exactly that).
 
@@ -103,8 +105,10 @@ data at `out/qsa-index-capture/`):
   12 layers each, 72 selection captures; **140K** — three chunks of 4,096/4,096/2,432 at positions
   131,072…141,695, 12 layers each, 36 captures (the run armed on `MIN_POS=131072`, so the prompt's
   earlier chunks are absent).
-- Dense columns (`counts = -1`, where `n ≤ 512`) carry no meaningful ids: 24,806 at 16K, 0 at 140K.
-  While `p+1 ≤ 2,051` tokens the selection short-circuits and QSA equals dense causal
+- Dense columns (`counts = -1`, where `n ≤ 512`) carry no meaningful ids: **2,051 per layer at 16K**,
+  all in chunk 0 (positions 0–2,050, `complete_blocks ≤ 512`) — 24,612 across the 72 prefill captures,
+  and 24,806 across all 300 selection captures of the run once decode and verify calls are counted;
+  0 at 140K. While `p+1 ≤ 2,051` tokens the selection short-circuits and QSA equals dense causal
   (`include/infernix/ops/qsa.h:33-34`; §8.10 `:1197-1199`).
 - Layer identity is the plane's `pooled_ptr` (13 distinct across a run; 12 in a text prefill chunk —
   the MTP plane appears in decode steps).
@@ -123,9 +127,17 @@ data at `out/qsa-index-capture/`):
    reads them (`qsa.cu:926`, `:942`, `:1141`), so a shared-gather pass consumes the same arrays and
    leaves `qsa_select` untouched.
 3. **A dedup needs a new attention gather and must respect §3's contract** — share loads, never reorder
-   a query's accumulation.
-4. **Prompt attention (245–248 ms/call) dwarfs selection (73–86 ms/call), but its gather share is
+   a query's accumulation. A union iterated in ascending block id yields each query's list (itself
+   ascending block ids, with the tail appended) as a subsequence, so a tile-wide shared gather is
+   contract-legal; it is not a small change, because the union cannot be resident and the kernel must
+   stream it block by block into one accumulator per query in the tile.
+4. **Prompt attention (245–248 ms/call) dwarfs selection (~85 ms/call), but its gather share is
    unmeasured**, so the prototype's timing leg needs its own A/B rather than the existing numbers.
+5. **The chunk-level redundancy is not the achievable saving.** A chunk's union spans every column
+   (4,096 queries × 512 selections) — far beyond any staging budget — while the quantity a shared
+   gather banks is the **tile-union** ratio, which falls quickly with the tile's width (measured in
+   `proto/qsa-overlap-measurement`: 0.55 at width 4, 0.70 at width 8, 0.81 at width 16 at 16K; 0.46,
+   0.59 and 0.68 at 140K). The chunk-level figure is that curve's asymptote, not a bankable number.
 
 ## Flags
 
