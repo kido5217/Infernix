@@ -1,0 +1,34 @@
+captured_at 2026-10-13T09:31:29Z
+kind selection
+step 4
+capture 64
+layer_call 28
+batch 1
+width 1
+columns 1
+positions_count 1
+max_context 147456
+top_blocks 512
+geometry heads=24 kv_heads=2 head_dim=256 index_heads=4 index_head_dim=128 rotary_dim=64 budget=2048 ratio=4 theta=1e+07 eps=1e-06 yarn_factor=4 original_positions=262144
+plane_slots 32
+plane_layout [Di/ratio, 64, 1, pages] contiguous; element(slots*page_i, slot) = slots*64*page + slots*(token&63) + slot, page = block_table[token>>6]; pooled.bin holds the used plane pages in token-page order (page j at byte offset j*plane_page_bytes)
+bytes_per_token_per_layer 64
+bytes_per_block_per_layer 256
+min_position 141706
+max_position 141706
+complete_blocks 35426
+plane_pages_used 2215
+plane_page_bytes 4096
+pooled_ptr 14136381440
+pooled ne=[32,64,1,2305] dtype=0 numel=4720640 bytes=9441280
+index_q ne=[128,4,1,1] dtype=0 numel=512 bytes=1024
+block_tables ne=[2304,1,1,1] dtype=2 numel=2304 bytes=9216
+table_rows ne=[1,1,1,1] dtype=2 numel=1 bytes=4
+selected_shape [top,columns]=[512,1] i32
+counts_shape [columns]=[1] i32 (top, or -1 when the column is dense)
+scores_group 1
+scores_group_begin 0
+scores_group_columns 1
+scores_stride 36896
+scores_shape [columns_in_group,stride]=[1,36896] f32; the last group is absolute columns 0..0; group column c holds block b at scores[c*stride+b] for b < its complete block count
+scores_bytes_written 147584

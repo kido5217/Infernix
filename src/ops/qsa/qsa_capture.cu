@@ -33,6 +33,7 @@ struct State {
     fs::path dir;
     long long min_pos = 0;
     int max_captures  = 256;
+    bool eager_flag   = false;
 
     std::mutex mutex;
     int step        = 0;
@@ -66,6 +67,9 @@ void initialise() {
     if (const char* n = std::getenv("INFERNIX_QSA_CAPTURE_MAX")) {
         const int value = std::atoi(n);
         if (value > 0) { s.max_captures = value; }
+    }
+    if (const char* e = std::getenv("INFERNIX_QSA_CAPTURE_EAGER")) {
+        s.eager_flag = (*e != '\0' && *e != '0');
     }
     std::error_code ec;
     fs::create_directories(s.dir, ec);
@@ -205,6 +209,12 @@ bool enabled() {
     return state().on;
 }
 
+bool eager() {
+    initialise();
+    State& s = state();
+    return s.on && s.eager_flag;
+}
+
 void step_begin(const Tensor& positions, cudaStream_t stream) {
     initialise();
     State& s = state();
@@ -270,7 +280,7 @@ void plane(const Tensor& pooled_pages, const QsaBatch& batch, const QsaGeometry&
 }
 
 void selection(const Tensor& index_q, const Tensor& pooled_pages, const QsaBatch& batch,
-               const QsaGeometry& geometry, std::int32_t max_context,
+               const QsaGeometry& geometry, std::int32_t max_context, const void* scratch,
                const detail::QsaSelectOutput& output, cudaStream_t stream) {
     initialise();
     State& s = state();
@@ -307,6 +317,15 @@ void selection(const Tensor& index_q, const Tensor& pooled_pages, const QsaBatch
     dump(dir / "selected.bin", output.selected, static_cast<std::size_t>(top) * static_cast<std::size_t>(columns) * 4);
     dump(dir / "counts.bin", output.counts, static_cast<std::size_t>(columns) * 4);
 
+    // The engine's own FP32 scores, exposed by qsa_select_scores for the selection's last group.
+    const detail::QsaSelectScores scores = detail::qsa_select_scores(scratch, geometry, max_context);
+    const std::int32_t group             = std::min(columns, detail::kQsaSelectGroupColumns);
+    const std::int32_t group_begin       = group > 0 ? ((columns - 1) / group) * group : 0;
+    const std::int32_t group_columns     = columns - group_begin;
+    const std::size_t score_bytes =
+        static_cast<std::size_t>(group_columns) * static_cast<std::size_t>(scores.stride) * sizeof(float);
+    dump(dir / "scores.bin", scores.scores, score_bytes);
+
     std::ofstream meta(dir / "meta.txt");
     meta << "captured_at " << timestamp() << "\n";
     meta << "kind selection\n";
@@ -337,6 +356,14 @@ void selection(const Tensor& index_q, const Tensor& pooled_pages, const QsaBatch
     print_shape(meta, "table_rows", batch.table_rows, 4);
     meta << "selected_shape [top,columns]=[" << top << "," << columns << "] i32\n";
     meta << "counts_shape [columns]=[" << columns << "] i32 (top, or -1 when the column is dense)\n";
+    meta << "scores_group " << group << "\n";
+    meta << "scores_group_begin " << group_begin << "\n";
+    meta << "scores_group_columns " << group_columns << "\n";
+    meta << "scores_stride " << scores.stride << "\n";
+    meta << "scores_shape [columns_in_group,stride]=[" << group_columns << "," << scores.stride
+         << "] f32; the last group is absolute columns " << group_begin << ".." << (columns - 1)
+         << "; group column c holds block b at scores[c*stride+b] for b < its complete block count\n";
+    meta << "scores_bytes_written " << score_bytes << "\n";
 }
 
 } // namespace infernix::ops::capture

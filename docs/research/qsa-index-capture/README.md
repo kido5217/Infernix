@@ -1,56 +1,77 @@
-# QSA pooled-index and selection capture (ticket #40)
+# QSA pooled-index, selection and engine-score capture (ticket #40)
 
-Recorded data for the map "bit-plane QSA index scan (issue #5 execution)": the pooled QSA index-key
-plane as the engine stores it, the index query the scan consumed, and the full-BF16 block selection,
-at ≥ 128K context and at a smaller 16K context. The capture hook lives on the throwaway branch
+Recorded data for the map "bit-plane QSA index scan (issue #5 execution)" and the pre-registration
+(issue #39, rev 2): the pooled QSA index-key plane as the engine stores it, the index query the scan
+consumed, the full-BF16 top-512 block selection, and **the engine's own FP32 scores** — at ≥ 128K
+context and at a smaller 16K context. The capture hook lives on the throwaway branch
 `proto/qsa-index-capture`, is off by default, and is never merged.
 
-Everything here is a record, not an analysis. The intended use is an offline prototype that
-recomputes `score_b = (1/√Di)·Σ_h ReLU(⟨index_q_h, pooled_key_b⟩)` from `pooled.bin` + `index_q.bin`
-and compares its top-512 against `selected.bin`.
+Everything here is a record, not an analysis. Rev 2's baseline A0 is the engine's own numbers, so an
+offline reader must reconstruct `score_b` from `pooled.bin` + `index_q.bin` and compare it against
+`scores.bin`, not against a reimplementation. `verify_capture.py` does exactly that and reports the
+max absolute and relative difference.
 
 ## Contents
 
 | File | What |
 |---|---|
 | `make_prompt.py` | deterministic prompt generator (line-numbered records) |
-| `prompt_16k.txt` | the 16K prompt (160 lines), token count and sha256 below |
-| `prompt_140k.txt` | the ≥128K prompt (980 lines) |
-| `manifest-16k.txt` | `<sha256>  <bytes>  <relpath>` for every file of the 16K capture |
-| `manifest-140k.txt` | the same for the ≥128K capture |
-| `verify_capture.py` | recomputes scores from a capture and checks the recorded selection |
-| `sample/` | small full copies and metas of real capture files (see "Sample") |
+| `prompt_16k.txt`, `prompt_140k.txt` | the two prompts, token counts and sha256 below |
+| `prompt_lines.txt` | the line counts that regenerate them |
+| `manifest-16k.txt`, `manifest-140k.txt` | **Run A** (pre-extension): planes/queries/selections |
+| `manifest-scores-16k.txt`, `manifest-scores-140k.txt` | **Run S**: the same captures re-recorded with the engine's FP32 scores |
+| `manifest-eager-16k.txt`, `manifest-eager-140k.txt` | **Run E**: eager runs that cover all 13 planes and ≥ 8 steps at ≥ 128K |
+| `verify_capture.py` | recomputes scores/ids from a capture and checks them against the engine's |
+| `verify_repro.py` | checks that one capture root's content files reappear byte-identically under another |
+| `sample/` | small committed copies of real capture files (see "Sample") |
 
-The full captures are **not** committed. They live on this host at:
+Each manifest is a list of `sha256  bytes  relpath` for every file of its run. The captures are not
+committed; they live on this host at `/home/kido/network/projects/Infernix/out/qsa-index-capture/`:
 
-- 16K: `/home/kido/network/projects/Infernix/out/qsa-index-capture/16k/`
-- ≥128K: `/home/kido/network/projects/Infernix/out/qsa-index-capture/140k/`
+| run | contexts | where |
+|---|---|---|
+| A | 16K, ≥128K | `16k/`, `140k/` |
+| S | 16K, ≥128K | `scores-16k/`, `scores-140k/` |
+| E | 16K, ≥128K | `16k-eager/`, `140k-eager/` |
 
-(`out/` is gitignored; a later session on this host can read them directly, and every file's sha256
-and size is in the committed manifests.)
+(`out/` is gitignored; a later session on this host reads them directly.)
 
-## Runs
+## Which run produced what
+
+- **Run A** is the original capture: pooled planes, index queries and selections, no scores. It is
+  kept byte-identical.
+- **Run S** re-ran the identical configuration (same binary path, same flags, same prompt, greedy,
+  `max_tokens 8`) with the score hook. **Every content file of Run A reappears path-for-path
+  byte-identical** (16K: 1542/1542; ≥128K: 892/892, `meta.txt` excluded because it now carries the
+  score fields), and Run S adds exactly one `scores.bin` per selection capture (122 and 72). So the
+  score files provably belong to the same steps and columns as the selections already recorded
+  (`verify_repro.py` reports this, and the per-file check is the manifest comparison).
+- **Run E** re-ran with `INFERNIX_QSA_CAPTURE_EAGER=1` and `max_tokens 128/64`, so the rounds the
+  CUDA graph owns also run in the open. It covers **all 13 planes** (12 QSA attention layers + the
+  MTP block) and, at ≥ 128K, **17 steps** — rev 2 §7 rule 9. Each selection carries its scores.
+
+| | Run A (16K / ≥128K) | Run S (16K / ≥128K) | Run E (16K / ≥128K) |
+|---|---|---|---|
+| steps | 4 / 4 | 4 / 4 | 17 / 17 |
+| selections | 122 / 72 | 122 / 72 | 300 / 260 |
+| score files | 0 | 122 / 72 | 300 / 260 |
+| distinct planes | 13 / 13 | 13 / 13 | 13 / 13 |
+| files | 1836 / 1061 | 1958 / 1133 | 4200 / 3640 |
+| bytes | 1,068,783,092 / 1,907,724,940 | 2,291,109,932 / 2,605,523,308 | 2,796,149,999 / 5,854,531,186 |
+
+## Prompts and contexts
 
 | | 16K | ≥128K |
 |---|---|---|
-| engine commit | the branch's HEAD (see the commit adding this directory) | same |
-| serve port | 8841 | 8842 |
-| `--max-context` | 147456 | 147456 |
-| prompt | `prompt_16k.txt`, 160 lines | `prompt_140k.txt`, 980 lines |
-| prompt tokens (`count_tokens`) | 22433 | 141703 |
+| prompt | `prompt_16k.txt` (160 lines) | `prompt_140k.txt` (980 lines) |
+| prompt tokens (`/v1/messages/count_tokens`) | 22,433 | 141,703 |
 | prompt sha256 | `6580aad7b58e449804025ccf10029f30f019bd3c98dad0449c5714b7edad80e3` | `af1c0d720fe0c2306cad35e90c906073e731ebcbd084235d03677c3aa39b469b` |
-| captured steps (eager `Forward::run`) | 4 | 4 |
-| plane captures | 172 | 97 |
-| selection captures | 122 | 72 |
-| capture files | 1836 | 1061 |
-| capture bytes | 1,068,783,092 | 1,907,724,940 |
-| context reached | prompt positions 0..22432, decode to 22439 | positions 131072..141709; the last prefill chunk ends at 141695 |
-| complete blocks per column | up to 5,610 | up to 35,424 |
+| positions (Run A) | 0…22432, decode to 22439 | 131072…141695, decode to 141709 |
+| complete blocks at the deepest column | 5,610 | 35,426 |
 
-The ≥128K capture arms on `INFERNIX_QSA_CAPTURE_MIN_POS=131072`, so every selection it records has a
-maximum absolute position of at least 131072 — more than 128K tokens of context. Its six position
-ranges are `[131072,135167]`, `[135168,139263]`, `[139264,141695]` (4096/4096/2432 columns) and three
-decode-phase ranges with 7, 2 and 1 columns; each carries the 12 QSA attention layers.
+The ≥128K run arms on `INFERNIX_QSA_CAPTURE_MIN_POS=131072`, so every selection it records has a
+maximum absolute position of at least 131072 — more than 128K tokens of context. `--max-context
+147456` is the largest that fits the 141,703-token prompt plus generated tokens.
 
 ## The hook
 
@@ -61,7 +82,11 @@ decode-phase ranges with 7, 2 and 1 columns; each carries the 12 QSA attention l
 - `ops::qsa_pool_keys` (`src/ops/qsa/qsa.cu`, the writer) calls `capture::plane`, which dumps the
   pooled plane pages the call covers, for every QSA layer, the MTP block included.
 - `ops::detail::qsa_select` (`src/ops/qsa/qsa_select.cu`, the reader) calls `capture::selection`,
-  which dumps the same plane plus the index query, the selected block ids and the counts.
+  which dumps the plane, the index query, the selection, and the engine's own FP32 scores
+  (`ops::detail::qsa_select_scores`, `src/ops/qsa/qsa_select.h:69-73`).
+- `ProgramImpl::replay` (`src/models/qwen4_exp/program/program_impl.h`) consults `capture::eager()`:
+  with `INFERNIX_QSA_CAPTURE_EAGER` set it runs each round eagerly instead of capturing and replaying
+  it, so the rounds the graph owns still reach the hooks (see "The MTP attempt").
 
 Environment (all inert when unset):
 
@@ -69,12 +94,12 @@ Environment (all inert when unset):
 INFERNIX_QSA_CAPTURE=<dir>        output directory; unset/empty disables everything
 INFERNIX_QSA_CAPTURE_MIN_POS=<p>  capture only calls whose maximum absolute KV position ≥ p
 INFERNIX_QSA_CAPTURE_MAX=<n>      stop after n plane and n selection captures
+INFERNIX_QSA_CAPTURE_EAGER=1       run every CUDA-graph round eagerly (Run E)
 ```
 
 A call whose stream is capturing a CUDA graph is skipped: a synchronous copy is illegal inside a
-capture, and the qwen4_exp decode/verify rounds run inside CUDA graphs after their first eager
-execution. The engine's layer-walked prefill makes one `Forward::run` cover several 4096-token
-chunks, so a "step" is one such call, not one chunk.
+capture. The engine's layer-walked prefill makes one `Forward::run` cover several 4096-token chunks,
+so a "step" is one such call, not one chunk.
 
 ## File layout
 
@@ -87,13 +112,13 @@ chunks, so a "step" is one such call, not one chunk.
     table_rows.bin             I32[batch]     the table row of each sequence
     meta.txt                   geometry, positions, sizes, pooled_ptr
   selections/step_XX/s_YYY/    one per qsa_select call
-    (the same four files) + index_q.bin selected.bin counts.bin
+    (the same four files) + index_q.bin selected.bin counts.bin scores.bin
 ```
 
 `meta.txt` records `min_position`/`max_position`, `columns`, `complete_blocks`,
-`plane_pages_used`, `plane_page_bytes`, `pooled_ptr`, the full `geometry` line, and the sizes of the
-tensors. `pooled_ptr` is the plane's device address; the same QSA layer keeps the same pointer across
-captures of a run, so plane and selection captures can be paired by it.
+`plane_pages_used`, `plane_page_bytes`, `pooled_ptr`, the full `geometry` line, the tensor shapes,
+and the score-group fields. `pooled_ptr` is the plane's device address; the same QSA layer keeps the
+same pointer across a run, so plane and selection captures (and the MTP plane) can be paired by it.
 
 ### Element layouts (little-endian)
 
@@ -109,12 +134,15 @@ captures of a run, so plane and selection captures can be paired by it.
   KV pool leaves the rest of the reservation unmapped), in token-page order: token page
   `j = token >> 6` sits at byte offset `j · plane_page_bytes`, and within a page the element for
   token `t` and slot `s` is at `2·(slots·(t & 63) + s)`. `plane_page_bytes = 32·64·2 = 4096`.
+- `scores.bin` — FP32 `ne=[scores_group_columns, scores_stride]`, the engine's FP32 scores for the
+  selection's **last group** (the group `qsa_select_scores` exposes). The group is the last
+  `min(columns, 128)` columns of the call: `scores_group_begin … columns-1`. Group column `c`
+  (absolute column `scores_group_begin + c`) holds block `b` at `scores[c·scores_stride + b]` for
+  `b < its complete block count`. With `--max-context 147456`, `scores_stride = 36896` floats.
 - The pooled key of block `b` is 128 wide: slot `s` (0..3) holds `key[32·s + lane]` of token
   `4·b + s`, i.e. `key[32·s + lane] = bf16(pooled.bin at page (4b+s)>>6)[slots·((4b+s)&63) + lane]`.
 
 ## Geometry observed
-
-Every capture records the same geometry, read from `QsaGeometry` at runtime:
 
 | field | value |
 |---|---|
@@ -127,6 +155,7 @@ Every capture records the same geometry, read from `QsaGeometry` at runtime:
 | plane | BF16 `[Di/R, 64, 1, pages]` = `[32, 64, 1, pages]` |
 | bytes per token per layer | 64 (one 128-wide BF16 key per 4-token block) |
 | bytes per block per layer | 256 |
+| score stride | 36896 floats (max_context/ratio rounded up to a 32-float row) |
 
 ## Provenance
 
@@ -139,16 +168,16 @@ Every capture records the same geometry, read from `QsaGeometry` at runtime:
     `99bcafd5a97f53f0e1cd9e24b9dd6152154722d048519534a0ed314a8339139f`
 - Hardware/toolchain: NVIDIA GeForce RTX 5090, CUDA 13.1 (`sm_120a`), `nix develop .`
   (cmake 4.1.6, Python 3.13, ninja).
-- Sampling: request body `{"max_tokens": 8, "temperature": 0.0}` — greedy, so the capture is a
-  function of the context alone.
+- Sampling: `temperature 0.0`, `max_tokens` 8 (Runs A/S) and 64 (≥128K Run E) / 128 (16K Run E) —
+  greedy, so each capture is a function of the context alone.
 
-### Serve flags (identical for both runs except the port)
+### Serve flags (identical for every run except the port and these)
 
 ```
 build/apps/infernix-serve \
   /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-Uncensored-NVFP4-Infernix-00001-of-00003.infernix \
   --ngram-volume /home/kido/ai/models/infernix/Qwen3.8-Flash-Next-NVIDIA-NVFP4-Infernix.ngram \
-  --host 127.0.0.1 --port <8841|8842> \
+  --host 127.0.0.1 --port <8841..8849> \
   --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 \
   --max-context 147456 --rope-yarn-factor 4 --prefill-chunk 4096 \
   --spec mtp --draft-tokens 4 --lm-head-draft \
@@ -158,10 +187,10 @@ build/apps/infernix-serve \
 
 Deviations from the deployed unit `infernix-qwen38-flash-next`
 (`nixos-configs/users/kido/llm.nix`): `--max-context 1048576 → 147456` (the capture uses 141,703
-prompt tokens + 8 generated), `--max-concurrency 4 → 1`, port `8828 → 8841/8842`, and `--no-thinking`
-added while `--vision`, `--preserve-thinking`, `--reasoning-loop`, `--default-thinking-budget`,
-`--request-log-jsonl`, `--pending-timeout-ms` and `--media-cache-mib 2048` were dropped (no images,
-one bounded request). Everything else matches the unit.
+prompt tokens + generated), `--max-concurrency 4 → 1`, port `8828 → 884x`, and `--no-thinking` added
+while `--vision`, `--preserve-thinking`, `--reasoning-loop`, `--default-thinking-budget`,
+`--request-log-jsonl`, `--pending-timeout-ms` and `--media-cache-mib 2048` were dropped. Everything
+else matches the unit.
 
 ## Reproduce
 
@@ -169,20 +198,21 @@ one bounded request). Everything else matches the unit.
 nix develop . --command cmake --build build -j --target infernix-serve
 python3 docs/research/qsa-index-capture/make_prompt.py 980 > prompt_140k.txt   # the committed prompt
 
-INFERNIX_QSA_CAPTURE=$PWD/out/qsa-index-capture/140k \
+# Run S (scores; identical to Run A) — or add INFERNIX_QSA_CAPTURE_EAGER=1 for Run E.
+INFERNIX_QSA_CAPTURE=$PWD/out/qsa-index-capture/scores-140k \
 INFERNIX_QSA_CAPTURE_MIN_POS=131072 INFERNIX_QSA_CAPTURE_MAX=256 \
   nix develop . --command build/apps/infernix-serve <artifact> --ngram-volume <volume> \
-    --host 127.0.0.1 --port 8842 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 \
+    --host 127.0.0.1 --port 8848 --model-id Qwen3.8-Flash-Next --kv-dtype nvfp4 \
     --max-context 147456 --rope-yarn-factor 4 --prefill-chunk 4096 \
     --spec mtp --draft-tokens 4 --lm-head-draft --max-concurrency 1 --expert-ram-mib 66000 \
     --no-thinking --max-pending-requests 4 --media-cache-mib 512 &
 
 curl -s -H 'content-type: application/json' \
   --data '{"model":"Qwen3.8-Flash-Next","messages":[{"role":"user","content":"<prompt>"}]}' \
-  http://127.0.0.1:8842/v1/messages/count_tokens
+  http://127.0.0.1:8848/v1/messages/count_tokens
 curl -s -H 'content-type: application/json' \
   --data '{"model":"Qwen3.8-Flash-Next","max_tokens":8,"temperature":0.0,"messages":[{"role":"user","content":"<prompt>"}]}' \
-  http://127.0.0.1:8842/v1/messages
+  http://127.0.0.1:8848/v1/messages
 ```
 
 `nix develop .` is required so the process sees the NVIDIA driver libraries (`libcuda.so.1`).
@@ -191,33 +221,33 @@ curl -s -H 'content-type: application/json' \
 
 `sample/` holds committed copies (`sample/SHA256SUMS` lists their hashes):
 
-- `selection-decode-16k/` — a complete 16K decode selection (`columns=1`, `max_position=22439`,
-  5610 complete blocks, 1.4 MiB of plane pages). `verify_capture.py` runs on this directory and
-  reproduces the recorded 512 selected blocks (`exact-set 1/1`).
-- `selection-mtp-warmup-16k/` — a complete width-1 selection from the warm-up step (positions 12).
-  Width 1 is the draft-step shape (`Forward::run_mtp` requires it); the 12 attention layers run at the
-  chunk width, so this is the MTP block's selection (its plane is the 13th).
-- `selection-140k/meta.txt`, `plane-140k/meta.txt` — the metas of a ≥128K selection and plane capture
-  (block counts, page counts, `pooled_ptr`); their bulk files are on this host and hashed in
-  `manifest-140k.txt`.
+- `selection-decode-16k/` — a complete 16K decode selection **with its `scores.bin`**
+  (`columns=1`, `max_position=22439`, 5610 complete blocks). `verify_capture.py` runs on this
+  directory and reports both the score difference and the reproduced 512 ids.
+- `selection-mtp-warmup-16k/` — a complete width-1 draft-step selection with scores (the MTP plane).
+- `selection-mtp-140k/` — a complete **MTP selection at ≥ 128K** (`position=141706`, width 1, 35426
+  blocks): every file except `pooled.bin`, which is 9 MiB and stays on the host (its sha256 is in
+  `manifest-eager-140k.txt`).
+- `selection-140k/meta.txt`, `plane-140k/meta.txt` — the metas of Run A's ≥128K selection and plane.
 
 ## Validation
 
-`verify_capture.py CAPDIR [n_columns]` recomputes `score_b` from `pooled.bin` + `index_q.bin` and
-compares its top-512 to `selected.bin`:
+`verify_capture.py CAPDIR [n_columns]` recomputes `score_b` from `pooled.bin` + `index_q.bin`, compares
+it against the engine's `scores.bin`, and checks the recorded top-512 against the recomputed one:
 
-- 16K `selections/step_02/s_050` (4096→1946 columns, 5,606 blocks): checked 6 columns, exact-set 6/6,
-  order-robust 6/6.
-- 16K `selections/step_04/s_111` (decode, 5,610 blocks): exact-set 1/1, order-robust 1/1.
-- ≥128K `selections/step_02/s_001` (4096 columns, 33,792 blocks): checked 4 columns, exact-set 4/4,
-  order-robust 4/4.
+| capture | blocks | columns | max abs diff | max rel diff (elementwise / column-scaled) | ids exact-set |
+|---|---|---|---|---|---|
+| `scores-140k/selections/step_02/s_001` | 33,792 | 4 | 2.651e-06 | 3.801e-07 / 1.906e-07 | 4/4 |
+| `scores-16k/selections/step_04/s_111` | 5,610 | 1 | 1.131e-06 | 3.381e-07 / 8.412e-08 | 1/1 |
+| `140k-eager/selections/step_04/s_064` (MTP) | 35,426 | 1 | 3.268e-06 | 3.423e-07 / 1.936e-07 | 1/1 |
 
-So an offline reader reconstructs the exact selected block set from the captured plane and query.
+Every checked column is within `1e-6` relative (rev 2 §1's fidelity bound), and the recomputed
+top-512 equals the engine's selected set exactly on every checked column.
 
 ## Inertness
 
-With `INFERNIX_QSA_CAPTURE` unset nothing is copied and no file is written; the hooks read one cached
-flag and return. Evidence:
+With `INFERNIX_QSA_CAPTURE` unset nothing is copied, no file is written and `replay()` is untouched
+(the hooks read one cached flag and return). Evidence, from the extension's rebuilt binaries:
 
 - `build/tests/infernix_qsa_select_test` and `build/tests/infernix_qsa_test`, run with and without
   `INFERNIX_QSA_CAPTURE=<dir> INFERNIX_QSA_CAPTURE_MIN_POS=0 INFERNIX_QSA_CAPTURE_MAX=1`, produced
@@ -226,18 +256,44 @@ flag and return. Evidence:
 - The 16K request with the hook enabled and disabled produced the same response (`content` and
   `usage` equal: `input_tokens 22433`, `output_tokens 8`).
 
+## The MTP attempt (rev 2 §7 rule 9)
+
+**No existing flag or environment variable disables CUDA graphs for this model.** Evidence:
+
+- `--no-cuda-graph` is parsed (`src/serve/serve_options.cpp`, `use_cuda_graph`) and reaches
+  `EngineOptions::use_cuda_graph` (`include/infernix/types.h`), but the qwen4_exp Program never reads
+  it: `src/runtime/engine/qwen4_exp_instance.cpp` builds `program::ProgramOptions`
+  (`src/models/qwen4_exp/program/program.h`) with **no graph field**, and every decode, verify and MTP
+  round goes through `ProgramImpl::replay` (`src/models/qwen4_exp/program/program_impl.h`), which
+  captures on the second use of each slot and replays afterwards. `grep use_cuda_graph` over
+  `src/models/qwen4_exp/` finds nothing.
+- The only `getenv` calls in the tree are `INFERNIX_CUDA_SYNC` (`src/core/device.cu`), `WT_SESSION`
+  (log colour) and this ticket's own `INFERNIX_QSA_CAPTURE*`. There is no graph switch.
+- The MTP path is `run_mtp` → `mtp_block` → `attention` → `qsa_attention` → `qsa_select`, wrapped by
+  `replay(mtp_draft_graphs_[…], …)`; after warm-up the body only runs inside the graph, which is why
+  the pre-extension ≥128K capture held the MTP *plane* (written by the eager, `kv_only` prefill
+  pooling) but no MTP *selection*.
+
+**What was done instead:** a new off-by-default switch, `INFERNIX_QSA_CAPTURE_EAGER=1`, makes
+`ProgramImpl::replay` run its body eagerly instead of capturing/replaying it. It executes the
+engine's own kernels, not an offline reimplementation — the captured selections and scores are the
+engine's. With it, Run E covers all 13 planes: at ≥128K, 16 of its 17 steps carry 13 distinct planes,
+including MTP width-1 selections (e.g. `140k-eager/selections/step_04/s_064`, position 141706,
+35,426 blocks, validated above).
+
+Limit of that evidence: Run E's decode-round schedule is not identical to Run A's (Run A captured
+only the first eager execution of each graph slot; Run E runs them all), so 25 (16K) and 24 (≥128K)
+of Run A's decode-phase `index_q`/`selected` files do not reappear in Run E. Every prefill-phase
+content file, and all of Run A, reappears in Run S byte-identically.
+
 ## Limitations
 
-- **MTP selection at ≥ 128K is not capturable here.** The MTP block's prefill `qsa_pool_keys` runs
-  with `kv_only`, so it selects nothing; its decode-phase selection runs inside a CUDA graph after
-  the first warm-up call, and the graph reuse is not controllable from these flags. The ≥128K
-  capture therefore holds the 12 QSA attention layers' selections and the MTP block's *pooled planes*
-  (the writer hook fires for it: the single 512-column plane captures are its `kMtpChunkColumns = 512`
-  sub-chunk calls); MTP *selections* exist only in the 16K capture, at the warm-up width-1 step.
-- **Plane captures are per-call position windows.** A plane capture's `pooled.bin` covers all pages up
-  to its own `max_position`; the full plane for a given context comes from the capture with the
-  largest `max_position` for that plane, or by using `block_table.bin` to index page by page.
 - **No explicit QSA layer index.** The ops API passes a `QsaKVLayer`, not an index; the step's
   `layer_call` order and `pooled_ptr` are the identity available.
-- One ≥128K serve start failed ("dense weights were placed in shared system memory") because the
-  preceding capture's process had not released VRAM yet; it was restarted after the GPU was free.
+- **`scores.bin` is the last group only** — the accessor `qsa_select_scores` exposes one group
+  (≤ 128 columns) of a multi-group call, so a 4096-column prefill capture carries scores for its last
+  128 columns; decode captures (`columns ≤ 7`) carry all of them.
+- **Plane captures are per-call position windows.** A plane capture's `pooled.bin` covers all pages up
+  to its own `max_position`.
+- One ≥128K serve start once failed with "dense weights were placed in shared system memory" because
+  the preceding capture's process had not released VRAM; it was restarted after the GPU was free.

@@ -3112,6 +3112,13 @@ private:
         } else {
             // A captured body bakes in whatever it reads by address: the arena *work_ points at and
             // the per-layer waits forward_call consumes. Neither may be a call's temporary.
+            if (ops::capture::eager()) {
+                // Throwaway capture branch: run every later round eagerly too, so rounds the graph
+                // would own (the MTP draft and all decode/verify rounds after the first) still run
+                // in the open and reach the capture hooks. Off unless INFERNIX_QSA_CAPTURE_EAGER.
+                body();
+                return;
+            }
             if (wide_active_ || !next_waits_[0].empty() || !next_waits_[1].empty()) {
                 throw std::logic_error("Qwen4Exp: a graph capture inside a wide call or with pending layer waits");
             }

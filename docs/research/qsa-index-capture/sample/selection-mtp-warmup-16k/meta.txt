@@ -1,4 +1,4 @@
-captured_at 2026-10-13T08:52:50Z
+captured_at 2026-10-13T09:34:37Z
 kind selection
 step 1
 capture 13
@@ -26,3 +26,9 @@ block_tables ne=[2304,1,1,1] dtype=2 numel=2304 bytes=9216
 table_rows ne=[1,1,1,1] dtype=2 numel=1 bytes=4
 selected_shape [top,columns]=[512,1] i32
 counts_shape [columns]=[1] i32 (top, or -1 when the column is dense)
+scores_group 1
+scores_group_begin 0
+scores_group_columns 1
+scores_stride 36896
+scores_shape [columns_in_group,stride]=[1,36896] f32; the last group is absolute columns 0..0; group column c holds block b at scores[c*stride+b] for b < its complete block count
+scores_bytes_written 147584
