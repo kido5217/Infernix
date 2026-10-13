@@ -1,13 +1,18 @@
-# Cross-query block-selection overlap on the captured QSA prefill selections
+# Cross-query block-selection overlap on the captured QSA prefill: the tile-union curve, with the chunk-level union as its upper bound
 
 Measurements for the map ticket "cross-query KV dedup in the QSA prefill" (issue #45) and its task
 ticket **#48**. CPU only, read-only over the capture branch `proto/qsa-index-capture` (head
 `05f74f1a`, data at `out/qsa-index-capture/`, gitignored). No selection was re-run; no capture file was
 written.
 
-The result is what the prototype gate depends on: **the realized dedup ratio is 0.9980 at 16K and
-0.9844 at 140K**, i.e. far above the issue's ~30 % bar; the per-chunk spread across the 12 layers
-(max − min) is at most 0.0046 at 16K and 0.0173 at 140K.
+Two numbers, two meanings. **Chunk-level union** — every column of a chunk unioned at once — is
+0.9980 at 16K and 0.9844 at 140K, but it is an **upper bound** (the `w→∞` asymptote): no CTA can stage
+a union that size, so it is not an achievable load reduction. The achievable metric is the
+**tile-union ratio** over consecutive-column tiles: at width `w = 8` it is **0.704 at 16K and 0.587 at
+140K**, rising to 0.988 / 0.925 at `w = 512`. Both clear the issue's ~30 % bar from `w = 2` (0.318) at
+16K and `w = 4` (0.460) at 140K; at 140K a width-2 tile is 0.275, just under. The per-layer spread is
+small at every width (§1). The saved-byte figures are **load volume** — L2 traffic at the capture's
+dtype, DRAM only where the working set exceeds the 96 MiB L2 (§1c).
 
 ## Metric (definition used here)
 
@@ -15,12 +20,15 @@ For a prefill chunk with non-dense query columns `q` and per-query selected sets
 512` block ids, each block = `ratio` = 4 tokens):
 
 ```
-R_chunk = 1 - |union_q S_q| / sum_q |S_q|
+upper_bound_ratio = 1 - |union_q S_q| / sum_q |S_q|                (all columns of the chunk)
+tile_ratio(w)     = 1 - |union_{q in tile} S_q| / (|tile| * top)  (consecutive tiles of w columns)
 ```
 
-This is the fraction of the chunk's block-gather work that disappears if the chunk gathers each
-distinct block once instead of once per query. Summed over a context it is `1 - sum(distinct) /
-sum(sum_blocks)`.
+`upper_bound_ratio` is the fraction of the chunk's block-gather work that disappears if the chunk
+gathers each distinct block once instead of once per query — but its union spans every column of the
+chunk, which no CTA can stage (the `w→∞` asymptote). `tile_ratio` is the same fraction over a tile a
+CTA can hold, and is the achievable metric (§1a). Summed over a context `upper_bound_ratio` is
+`1 - sum(distinct) / sum(sum_blocks)`.
 
 Dense columns (`counts = -1`, where the column's complete-block count is `<= top`) carry no selection
 and are excluded from both the union and the sum (they are counted in the raw output).
@@ -47,7 +55,10 @@ eager runs and cover all layers at both contexts. They are not a different data 
 shows the prefill `selected.bin` **and** `counts.bin` are byte-identical across the three runs per
 context — 72/72 identical among `16k`, `16k-eager`, `scores-16k`, and 36/36 among `140k`,
 `140k-eager`, `scores-140k` (`results/run_consistency.txt`). So the measurement is run-independent; using
-the eager runs costs nothing and matches the ticket.
+the eager runs costs nothing and matches the ticket. The identity is over the **prefill** captures
+only (the `columns >= 1000` selection calls). The same runs also hold decode / verify / MTP selection
+captures (`columns <= 13`), which are one query per step and whose blocks follow the sampled token
+stream rather than the prompt, so they are not expected to be run-identical and are not compared.
 
 A prefill chunk capture is identified as a selection capture with `columns >= 1000` (the decode,
 verify and MTP calls in the same runs have `columns <= 13`); layers are keyed by `pooled_ptr` and
@@ -58,19 +69,81 @@ chunks ordered by `min_position`. Byte layouts are exactly `verify_capture.py`'s
 
 ```
 nix develop . --command python3 docs/research/qsa-overlap-measurement/measure_overlap.py
-nix develop . --command python3 docs/research/qsa-overlap-measurement/verify_runs.py
+nix develop . --command python3 docs/research/qsa-overlap-measurement/verify_runs.py \
+    --out docs/research/qsa-overlap-measurement/results/run_consistency.txt
 ```
 
-`measure_overlap.py` writes to `results/`; the raw numbers are re-derivable from the four files:
+`measure_overlap.py` writes to `results/`; the raw numbers are re-derivable from these files:
 
 | file | contents |
 |---|---|
-| `results/per_chunk_layer.tsv` | one row per chunk × layer: columns, dense/valid columns, sum, distinct, ratio, blocks saved, bytes saved, singleton stats |
+| `results/per_chunk_layer.tsv` | one row per chunk × layer: columns, dense/valid columns, sum, distinct, `upper_bound_ratio`, blocks/bytes saved, working-set bytes, singleton stats |
+| `results/tile_union.tsv` | per context × tile width: `ratio_mean`/`ratio_min`/`ratio_max` across layers, mean union blocks and union bytes per tile |
 | `results/selection_count_histogram.tsv` | long format `(selection_count, n_blocks)` per chunk × layer: how many blocks are selected by exactly `k` queries |
 | `results/distance_curve.tsv` | per chunk × layer × `d` × scope (`all`/`same_chunk`/`cross_chunk`): n_pairs, mean intersection, mean overlap, mean Jaccard |
-| `results/summary.json` | per-context aggregates, provenance, row-profile constants |
+| `results/summary.json` | per-context aggregates (upper-bound stats and the `tile_union` curve), provenance, row-profile constants |
+| `results/run_consistency.txt` | `verify_runs.py` report: prefill captures byte-identical across the three runs per context |
 
-## 1. Realized dedup ratio
+## 1. Union ratio: the tile-union curve (headline) and the chunk-level upper bound
+
+### 1a. Tile-union ratio — the achievable reduction
+
+For a tile of `w` consecutive query columns, `1 − |⋃_{q∈tile} S_q| / (w·512)` is the fraction of that
+tile's block-gather work a single CTA drops by gathering each distinct block once. It is the metric a
+kernel can act on: the union is iterated in ascending block id, which preserves each query's
+accumulation order (contract-legal), and the tile's union has to fit the CTA's shared-memory budget
+(99 KiB per CTA on `sm_120`; `src/ops/qsa/qsa_prompt.cu:890`, `src/ops/qsa/qsa.cu:453`).
+
+Mean over the 12 layers, `[min,max]` across layers; union blocks and union bytes are per tile.
+
+**16K**
+
+| w (columns) | tile-union ratio | [min,max] | union blocks/tile | NVFP4 | INT8 | BF16 |
+|---|---|---|---|---|---|---|
+| 1 | 0.000 | [0.000, 0.000] | 512 | 1.12 MiB | 2.06 MiB | 4.00 MiB |
+| 2 | 0.318 | [0.263, 0.402] | 698 | 1.53 MiB | 2.81 MiB | 5.45 MiB |
+| 4 | 0.546 | [0.484, 0.634] | 930 | 2.04 MiB | 3.75 MiB | 7.27 MiB |
+| 8 | 0.704 | [0.654, 0.771] | 1,213 | 2.67 MiB | 4.89 MiB | 9.48 MiB |
+| 16 | 0.811 | [0.781, 0.854] | 1,547 | 3.40 MiB | 6.23 MiB | 12.09 MiB |
+| 32 | 0.880 | [0.864, 0.903] | 1,963 | 4.31 MiB | 7.91 MiB | 15.33 MiB |
+| 64 | 0.925 | [0.919, 0.932] | 2,450 | 5.38 MiB | 9.87 MiB | 19.14 MiB |
+| 128 | 0.954 | [0.953, 0.958] | 2,938 | 6.45 MiB | 11.83 MiB | 22.95 MiB |
+| 512 | 0.988 | [0.988, 0.989] | 3,104 | 6.82 MiB | 12.50 MiB | 24.25 MiB |
+| all | 0.998 | [0.998, 0.998] | 3,489 | 7.67 MiB | 14.05 MiB | 27.26 MiB |
+
+**140K**
+
+| w (columns) | tile-union ratio | [min,max] | union blocks/tile | NVFP4 | INT8 | BF16 |
+|---|---|---|---|---|---|---|
+| 1 | 0.000 | [0.000, 0.000] | 512 | 1.12 MiB | 2.06 MiB | 4.00 MiB |
+| 2 | 0.275 | [0.212, 0.333] | 742 | 1.63 MiB | 2.99 MiB | 5.80 MiB |
+| 4 | 0.460 | [0.380, 0.517] | 1,106 | 2.43 MiB | 4.45 MiB | 8.64 MiB |
+| 8 | 0.587 | [0.507, 0.646] | 1,690 | 3.71 MiB | 6.81 MiB | 13.20 MiB |
+| 16 | 0.678 | [0.621, 0.737] | 2,634 | 5.79 MiB | 10.61 MiB | 20.58 MiB |
+| 32 | 0.738 | [0.658, 0.792] | 4,290 | 9.43 MiB | 17.28 MiB | 33.52 MiB |
+| 64 | 0.780 | [0.682, 0.837] | 7,218 | 15.86 MiB | 29.07 MiB | 56.39 MiB |
+| 128 | 0.811 | [0.703, 0.879] | 12,401 | 27.25 MiB | 49.96 MiB | 96.89 MiB |
+| 512 | 0.925 | [0.892, 0.950] | 19,419 | 42.67 MiB | 78.23 MiB | 151.71 MiB |
+| all | 0.984 | [0.980, 0.988] | 28,217 | 62.00 MiB | 113.67 MiB | 220.45 MiB |
+
+The review's independently computed means are reproduced here to the third decimal at every width,
+and the `all` rows to the fourth (16K 0.9978, 140K 0.9836): 16K 0.318, 0.546, 0.704, 0.811, 0.880,
+0.925, 0.954, 0.988; 140K 0.275, 0.460, 0.587, 0.678, 0.738, 0.780, 0.811, 0.925. No figure
+differed.
+
+Reading: a **width-8 tile already removes 0.704 / 0.587** of its gather work and width 512 removes
+0.988 / 0.925; the issue's ~30 % bar is cleared from `w = 2` (0.318) at 16K and `w = 4` (0.460) at
+140K, while at 140K width 2 is 0.275, just under it. The union is not small: a width-8 tile union is
+4.89 MiB at INT8 (2.67 MiB at the capture's NVFP4) against the 99 KiB CTA budget, and a width-512
+union is 78.23 MiB / 42.67 MiB at 140K. The bytes column is what a kernel would have to stage; the
+`all` row is not stageable at all.
+
+### 1b. Chunk-level union ratio — the `w→∞` upper bound
+
+Unioning **all** of a chunk's columns at once (the `all` row above) is the ticket's `1 − distinct/sum`
+definition, but no CTA can stage it: at 16K the all-columns union is 7.7 MiB (NVFP4) to 14.05 MiB
+(INT8) per layer per chunk, at 140K 62.0 MiB to 220.5 MiB. It is an **upper bound on the achievable
+reduction, not a realized load reduction**. Its per-layer mean is 0.9978 (16K) / 0.9836 (140K).
 
 Overall: **16K `R = 0.99799`** (per-layer mean 0.9978, range 0.9944–0.9990, std 0.0016);
 **140K `R = 0.98444`** (per-layer mean 0.9836, range 0.9725–0.9898, std 0.0045). Both are far above the
@@ -110,7 +183,37 @@ block-gather volume removed per layer per chunk (both KV heads, K and V rows). R
 `--kv-dtype nvfp4` (288 B/token/kv-head); the column is in the raw TSV. Per full prompt (all chunks ×
 12 layers), the gather is 528.8 GB (INT8) / 1025.5 GB (BF16) at 16K and 275.7 GB / 534.7 GB at 140K;
 dedup removes 527.7 GB / 1023.5 GB and 271.4 GB / 526.4 GB respectively — i.e. **99.80 % (16K)** and
-**98.44 % (140K)** of the gather volume.
+**98.44 % (140K)** of the gather volume (all figures here are the chunk-level **upper bound**; the
+tile-union curve of §1a removes less).
+
+### 1c. What the saved bytes are: L2 traffic or DRAM
+
+`(sum − distinct) × ratio × kv_heads × row_bytes` is **load volume**, not time and not automatically
+DRAM. The per-chunk per-layer working set — the union a chunk re-reads — decides which. On the RTX
+5090 the L2 cache is **96 MiB** (TechPowerUp, *NVIDIA GeForce RTX 50 Series "Blackwell" Features
+Similar L1/L2 Cache Architecture to RTX 40 Series*, 2025-01-17,
+https://www.techpowerup.com/331233/nvidia-geforce-rtx-50-series-blackwell-features-similar-l1-l2-cache-architecture-to-rtx-40-series).
+Working set = `complete_blocks × ratio(4) × kv_heads(2) × row_bytes`:
+
+| context | chunk | complete_blocks | NVFP4 (288 B) | INT8 (528 B) | BF16 (1024 B) |
+|---|---|---|---|---|---|
+| 16K | 0 | 1,024 | 2.25 MiB | 4.12 MiB | 8.00 MiB |
+| 16K | 1 | 2,048 | 4.50 MiB | 8.25 MiB | 16.00 MiB |
+| 16K | 2 | 3,072 | 6.75 MiB | 12.38 MiB | 24.00 MiB |
+| 16K | 3 | 4,096 | 9.00 MiB | 16.50 MiB | 32.00 MiB |
+| 16K | 4 | 5,120 | 11.25 MiB | 20.62 MiB | 40.00 MiB |
+| 16K | 5 | 5,606 | 12.32 MiB | 22.58 MiB | 43.80 MiB |
+| 140K | 0 | 33,792 | 74.25 MiB | 136.12 MiB | 264.00 MiB |
+| 140K | 1 | 34,816 | 76.50 MiB | 140.25 MiB | 272.00 MiB |
+| 140K | 2 | 35,424 | 77.84 MiB | 142.70 MiB | 276.75 MiB |
+
+At the capture's own NVFP4 dtype the working set is 2.25–12.32 MiB at 16K and 74.25–77.84 MiB at 140K
+— **inside** the 96 MiB L2. The ~500× per-query re-reads the union removes are therefore already
+cache-served at that dtype: the 99.80 % / 98.44 % figure is **L2 / issue-slot traffic, not a DRAM
+saving**. At INT8 the 140K set is 136.1–142.7 MiB and at BF16 264–277 MiB, which **exceed** L2, so at
+those dtypes part of the re-reads would reach DRAM and dedup would also cut memory traffic. The dtype
+thus decides whether the number is cache traffic or DRAM traffic; all of it is load volume, and none
+of it is timed.
 
 ## 2. Structure of the overlap
 
@@ -177,25 +280,28 @@ with a nearly saturated small pool.
 
 ## 3. Dependence on context length
 
-- **Ratio decreases slowly with context length**: 0.9980 (16K, ≤5,610 blocks) → 0.9844 (140K, ≤35,424
-  blocks).
+- **Upper-bound ratio decreases slowly with context length**: 0.9980 (16K, ≤5,610 blocks) → 0.9844
+  (140K, ≤35,424 blocks).
 - **Within a context it decreases as the block pool grows**: 16K chunk 0 (1,024 blocks) 0.99902 →
   chunk 5 (5,606) 0.99440; 140K chunk 0 (33,792) 0.98656 → chunk 2 (35,424) 0.97792.
 - The decrease is driven by `distinct` growing toward the pool size while `sum = queries × 512` stays
   fixed per column; the adjacent-query overlap also falls with context (64 % → 54 %), and the fraction
   of singleton blocks rises (0.12 % → 6.35 %).
-- It is **flat in the sense that matters for the gate**: both contexts are more than 3× the ~30 % bar
-  (0.998 and 0.984 against 0.30).
+- It is **flat in the sense that matters for the gate**: the chunk-level upper bound is more than 3×
+  the ~30 % bar (0.998 and 0.984 against 0.30), and the achievable tile-union ratio clears it from
+  `w = 4` at both contexts (0.546 / 0.460).
 
 ## 4. Exclusions and coverage
 
 - **Dense columns** (`counts = -1`): 2,051 at 16K per layer — all in chunk 0, positions 0…2050, where
   `complete_blocks <= 512` and the engine short-circuits QSA to dense causal; that is 24,612 chunk ×
   layer rows, excluded and counted (`per_chunk_layer.tsv`, `dense_columns`). **0 at 140K.**
-- **Coverage.** The 140K capture arms on `MIN_POS=131072` and holds only positions 131072…141695 —
-  the last 10,624 tokens of the 141,703-token prompt. So the 140K ratio describes the ≥128K regime,
-  not a from-zero 140K prompt. The 16K capture covers positions 0…22425 (the whole 22,433-token
-  prompt).
+- **Coverage.** Positions are what was captured, not the whole prompt. The 140K capture arms on
+  `MIN_POS=131072` and its selection captures cover positions 131072…141695 — the last 10,624
+  positions of the 141,703-token prompt; the prompt's final 7 positions (one open tail) are after the
+  capture and are not in `selected.bin`. So the 140K ratio describes the ≥128K regime, not a from-zero
+  140K prompt. The 16K capture covers positions 0…22425 — all but the final 7-token tail of the
+  22,433-token prompt.
 - The open tail (the `position % 4` tokens after the last complete block) is outside `selected.bin` and
   is not part of this metric; per the facts note a column gathers its 512 blocks **plus** the tail.
 

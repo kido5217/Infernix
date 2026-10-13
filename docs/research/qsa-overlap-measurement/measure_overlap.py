@@ -4,9 +4,12 @@
 Read-only, CPU-only. Parses the captures of `proto/qsa-index-capture` (head 05f74f1a) exactly as its
 `verify_capture.py` does and emits raw per-chunk/per-layer tables plus a summary JSON.
 
-Metric (definition used here; see README):
-    R = 1 - |union_q S_q| / sum_q |S_q|
-over the **non-dense** query columns q of a prefill chunk, with |S_q| = top = 512 block ids.
+Metrics (definitions used here; see README):
+    upper_bound_ratio = 1 - |union_q S_q| / sum_q |S_q|
+over the **non-dense** query columns q of a prefill chunk, with |S_q| = top = 512 block ids. This
+unions all of a chunk's columns, a `w -> inf` asymptote no CTA can stage in its shared memory; the
+achievable metric is the tile-union ratio over consecutive-column tiles of width w:
+    tile_ratio = 1 - |union_{q in tile} S_q| / (|tile| * top)
 
 Inputs, per prefill chunk (one `selected.bin`/`counts.bin`/`positions.bin` capture):
   * selected.bin = I32 [top=512, columns]; column c's ascending block ids at selected[c*top + i]
@@ -36,6 +39,9 @@ DISTANCES = [1, 2, 4, 8, 16, 64, 256]
 #   BF16:         K 512, V 512                     = 1024 B
 #   NVFP4:        K 128 + scales 16, V 128 + 16    =  288 B  (the capture's own --kv-dtype)
 ROW_BYTES = {"int8": 528, "bf16": 1024, "nvfp4": 288}
+
+# Tile widths, in consecutive valid columns, for the tile-union curve; None = all of the chunk.
+TILE_WIDTHS = [1, 2, 4, 8, 16, 32, 64, 128, 512, None]
 
 
 def read_meta(path):
@@ -133,19 +139,55 @@ def chunk_metrics(chunk):
         "complete_blocks": chunk.complete_blocks,
         "sum_blocks": sum_blocks,
         "distinct_blocks": distinct,
-        "dedup_ratio": (1.0 - distinct / sum_blocks) if sum_blocks else float("nan"),
+        "dedup_ratio_upper_bound": (1.0 - distinct / sum_blocks) if sum_blocks else float("nan"),
         "blocks_saved": saved,
         "sum_bytes_int8": sum_blocks * chunk.ratio * chunk.kv_heads * ROW_BYTES["int8"],
         "sum_bytes_bf16": sum_blocks * chunk.ratio * chunk.kv_heads * ROW_BYTES["bf16"],
         "bytes_saved_int8": saved * chunk.ratio * chunk.kv_heads * ROW_BYTES["int8"],
         "bytes_saved_bf16": saved * chunk.ratio * chunk.kv_heads * ROW_BYTES["bf16"],
         "bytes_saved_nvfp4": saved * chunk.ratio * chunk.kv_heads * ROW_BYTES["nvfp4"],
+        # Working set a chunk's whole union would occupy: complete_blocks blocks x ratio tokens x
+        # kv_heads x row bytes. This is the union size (distinct <= complete_blocks), not a measured
+        # load, and it decides whether the re-reads are L2-served.
+        "workingset_bytes_int8": chunk.complete_blocks * chunk.ratio * chunk.kv_heads * ROW_BYTES["int8"],
+        "workingset_bytes_bf16": chunk.complete_blocks * chunk.ratio * chunk.kv_heads * ROW_BYTES["bf16"],
+        "workingset_bytes_nvfp4": chunk.complete_blocks * chunk.ratio * chunk.kv_heads * ROW_BYTES["nvfp4"],
         "singleton_blocks": int(np.count_nonzero(selected_counts == 1)),
         "max_selection_count": int(selected_counts.max()) if selected_counts.size else 0,
     }
     row["singleton_fraction"] = row["singleton_blocks"] / distinct if distinct else float("nan")
     row["hist"] = count_hist
     return row
+
+
+# --------------------------------------------------------------------------------------------------
+# tile-union curve (the achievable load reduction)
+
+def tile_union_layer(chunks, width):
+    """Union ratio and union size over consecutive-column tiles for one layer.
+
+    Columns are the chunk's non-dense columns in capture order (ascending position), split into
+    consecutive tiles of `width`; the last tile may be shorter. `width=None` puts the whole chunk in
+    one tile, recovering the chunk-level upper bound. Returns (mean tile ratio over the layer's
+    tiles, mean union block count per tile).
+
+    The union is over block ids, so its size is order-free; a kernel would iterate it in ascending
+    block id, which preserves each query's accumulation order (contract-legal).
+    """
+    ratios = []
+    unions = []
+    for c in chunks:
+        ids = c.valid_ids
+        n = ids.shape[0]
+        w = n if width is None else width
+        for s in range(0, n, w):
+            tile = ids[s:s + w]
+            blocks = int(np.unique(tile).size)
+            ratios.append(1.0 - blocks / (tile.shape[0] * c.top))
+            unions.append(blocks)
+    if not ratios:
+        return float("nan"), float("nan")
+    return float(np.mean(ratios)), float(np.mean(unions))
 
 
 # --------------------------------------------------------------------------------------------------
@@ -247,8 +289,16 @@ def main():
     per_chunk_rows = []
     hist_rows = []
     distance_rows = []
-    summary = {"base": base, "contexts": {}, "row_bytes": ROW_BYTES,
-               "metric": "R = 1 - |union_q S_q| / sum_q |S_q|  over non-dense columns q, |S_q|=top"}
+    tile_rows = []
+    summary = {
+        "base": base,
+        "contexts": {},
+        "row_bytes": ROW_BYTES,
+        "metric": ("upper_bound_ratio = 1 - |union_q S_q| / sum_q |S_q| over ALL non-dense columns q "
+                   "of a chunk, |S_q| = top: the w->inf asymptote no CTA can stage. "
+                   "tile_union[width] = 1 - |union_{q in tile} S_q| / (|tile| * top) over "
+                   "consecutive-column tiles, reported as per-layer mean/min/max over the layers."),
+    }
 
     for ctx in contexts:
         run_dir = os.path.join(base, ctx)
@@ -259,9 +309,12 @@ def main():
                    "distinct_blocks_summed": 0, "chunks_detail": []}
         t0 = time.time()
         layer_ratios = []
+        tile_acc = {w: {"ratios": [], "unions": []} for w in TILE_WIDTHS}
+        ctx_ratio = ctx_kv = None
         for li, ptr in enumerate(ptrs):
             chunks = layers[ptr]
             ctx_sum["chunks_per_layer"] = max(ctx_sum["chunks_per_layer"], len(chunks))
+            ctx_ratio, ctx_kv = chunks[0].ratio, chunks[0].kv_heads
             for ci, ch in enumerate(chunks):
                 row = chunk_metrics(ch)
                 row["context"] = ctx
@@ -283,36 +336,65 @@ def main():
                     "pos_begin": row["pos_begin"], "pos_end": row["pos_end"],
                     "valid_columns": row["valid_columns"], "dense_columns": row["dense_columns"],
                     "sum_blocks": row["sum_blocks"], "distinct_blocks": row["distinct_blocks"],
-                    "dedup_ratio": row["dedup_ratio"], "blocks_saved": row["blocks_saved"],
+                    "complete_blocks": row["complete_blocks"],
+                    "dedup_ratio_upper_bound": row["dedup_ratio_upper_bound"],
+                    "blocks_saved": row["blocks_saved"],
                     "bytes_saved_int8": row["bytes_saved_int8"],
                     "bytes_saved_bf16": row["bytes_saved_bf16"],
+                    "workingset_bytes_int8": row["workingset_bytes_int8"],
+                    "workingset_bytes_bf16": row["workingset_bytes_bf16"],
+                    "workingset_bytes_nvfp4": row["workingset_bytes_nvfp4"],
                     "singleton_fraction": row["singleton_fraction"],
                 })
-                layer_ratios.append(row["dedup_ratio"])
+                layer_ratios.append(row["dedup_ratio_upper_bound"])
             for r in layer_distance_curve(chunks):
                 r.update({"context": ctx, "layer": ptr, "layer_index": li})
                 distance_rows.append(r)
+            for w in TILE_WIDTHS:
+                ratio, blocks = tile_union_layer(chunks, w)
+                tile_acc[w]["ratios"].append(ratio)
+                tile_acc[w]["unions"].append(blocks)
             del layers[ptr]
-        ctx_sum["pooled_dedup_ratio"] = (
+        ctx_sum["pooled_upper_bound_ratio"] = (
             1.0 - ctx_sum["distinct_blocks_summed"] / ctx_sum["sum_blocks"]
             if ctx_sum["sum_blocks"] else float("nan"))
         r_arr = np.array(layer_ratios, dtype=float)
-        ctx_sum["ratio_mean"] = float(np.nanmean(r_arr))
-        ctx_sum["ratio_min"] = float(np.nanmin(r_arr))
-        ctx_sum["ratio_max"] = float(np.nanmax(r_arr))
-        ctx_sum["ratio_std"] = float(np.nanstd(r_arr))
+        ctx_sum["upper_bound_ratio_mean"] = float(np.nanmean(r_arr))
+        ctx_sum["upper_bound_ratio_min"] = float(np.nanmin(r_arr))
+        ctx_sum["upper_bound_ratio_max"] = float(np.nanmax(r_arr))
+        ctx_sum["upper_bound_ratio_std"] = float(np.nanstd(r_arr))
+        tile_union = {}
+        for w in TILE_WIDTHS:
+            a = np.array(tile_acc[w]["ratios"], dtype=float)
+            ub = np.array(tile_acc[w]["unions"], dtype=float)
+            ub_mean = float(np.nanmean(ub)) if ub.size else float("nan")
+            key = "all" if w is None else str(w)
+            tile_union[key] = {
+                "ratio_mean": float(np.nanmean(a)),
+                "ratio_min": float(np.nanmin(a)),
+                "ratio_max": float(np.nanmax(a)),
+                "union_blocks_mean": ub_mean,
+                "union_bytes_int8_mean": ub_mean * ctx_ratio * ctx_kv * ROW_BYTES["int8"],
+                "union_bytes_bf16_mean": ub_mean * ctx_ratio * ctx_kv * ROW_BYTES["bf16"],
+                "union_bytes_nvfp4_mean": ub_mean * ctx_ratio * ctx_kv * ROW_BYTES["nvfp4"],
+            }
+            tile_rows.append({"context": ctx, "width": key, **tile_union[key]})
+        ctx_sum["tile_union"] = tile_union
         ctx_sum["seconds"] = round(time.time() - t0, 1)
         summary["contexts"][ctx] = ctx_sum
         print(f"[{ctx}] layers={len(ptrs)} chunk-rows={ctx_sum['layers'] * ctx_sum['chunks_per_layer']} "
-              f"pooled ratio={ctx_sum['pooled_dedup_ratio']:.4f} mean={ctx_sum['ratio_mean']:.4f} "
-              f"min={ctx_sum['ratio_min']:.4f} max={ctx_sum['ratio_max']:.4f} "
+              f"upper-bound ratio (all columns) mean={ctx_sum['upper_bound_ratio_mean']:.4f} "
+              f"min={ctx_sum['upper_bound_ratio_min']:.4f} max={ctx_sum['upper_bound_ratio_max']:.4f}; "
+              f"tile-union ratio w=8 mean={tile_union['8']['ratio_mean']:.4f} "
+              f"w=all mean={tile_union['all']['ratio_mean']:.4f} "
               f"({ctx_sum['seconds']}s)", file=sys.stderr)
 
     chunk_cols = ["context", "layer", "layer_index", "chunk_index", "step", "capture",
                   "pos_begin", "pos_end", "columns", "dense_columns", "valid_columns", "top",
                   "ratio", "kv_heads", "complete_blocks", "sum_blocks", "distinct_blocks",
-                  "dedup_ratio", "blocks_saved", "sum_bytes_int8", "sum_bytes_bf16",
+                  "dedup_ratio_upper_bound", "blocks_saved", "sum_bytes_int8", "sum_bytes_bf16",
                   "bytes_saved_int8", "bytes_saved_bf16", "bytes_saved_nvfp4",
+                  "workingset_bytes_int8", "workingset_bytes_bf16", "workingset_bytes_nvfp4",
                   "singleton_blocks", "singleton_fraction", "max_selection_count"]
     write_tsv(os.path.join(outdir, "per_chunk_layer.tsv"), per_chunk_rows, chunk_cols)
     write_tsv(os.path.join(outdir, "selection_count_histogram.tsv"), hist_rows,
@@ -320,6 +402,9 @@ def main():
     write_tsv(os.path.join(outdir, "distance_curve.tsv"), distance_rows,
               ["context", "layer", "layer_index", "scope", "distance", "n_pairs",
                "mean_intersection", "mean_overlap", "mean_jaccard"])
+    write_tsv(os.path.join(outdir, "tile_union.tsv"), tile_rows,
+              ["context", "width", "ratio_mean", "ratio_min", "ratio_max", "union_blocks_mean",
+               "union_bytes_int8_mean", "union_bytes_bf16_mean", "union_bytes_nvfp4_mean"])
     with open(os.path.join(outdir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2, sort_keys=True)
     print(f"wrote {outdir}", file=sys.stderr)

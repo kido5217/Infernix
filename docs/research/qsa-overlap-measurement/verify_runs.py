@@ -5,7 +5,12 @@ Layers of the same prefill chunk were recorded by three serve runs per context; 
 `selected.bin` and `counts.bin` of every prefill chunk capture (>= 1000 columns) in each run and
 groups captures by (pooled_ptr, min_position), so any divergence between runs is visible.
 
-Usage: python3 verify_runs.py [--base out/qsa-index-capture]
+Scope: only the **prefill** captures are compared. The same runs also hold decode / verify / MTP
+selection captures (<= 13 columns), which are one query each and whose per-step blocks depend on the
+sampled token stream rather than on the prompt, so they are not expected to be run-identical and are
+not evidence for or against the prefill measurement's run-independence.
+
+Usage: python3 verify_runs.py [--base out/qsa-index-capture] [--out results/run_consistency.txt]
 """
 import argparse
 import glob
@@ -51,8 +56,15 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default=os.path.join(here, "..", "..", "..", "out", "qsa-index-capture"))
+    ap.add_argument("--out", default="", help="also write the report to this file")
     args = ap.parse_args()
     base = os.path.abspath(args.base)
+
+    lines = []
+
+    def report(text):
+        print(text)
+        lines.append(text)
 
     groups = [("16k", ["16k", "16k-eager", "scores-16k"]),
               ("140k", ["140k", "140k-eager", "scores-140k"])]
@@ -61,20 +73,24 @@ def main():
         for run in runs:
             path = os.path.join(base, run)
             if not os.path.isdir(path):
-                print(f"{name}: {run}: MISSING")
+                report(f"{name}: {run}: MISSING")
                 continue
             hashes[run] = prefill_hashes(path)
         ref_run = runs[1] if len(runs) > 1 else runs[0]  # the eager run is the measurement's primary
         ref = hashes.get(ref_run, {})
-        print(f"{name}: reference = {ref_run} ({len(ref)} prefill chunk captures)")
+        report(f"{name}: reference = {ref_run} ({len(ref)} prefill chunk captures)")
         for run in runs:
             other = hashes.get(run, {})
             same = sum(1 for k in ref if k in other and ref[k][1] == other[k][1]
                        and ref[k][2] == other[k][2])
             missing = len(set(ref) - set(other))
             extra = len(set(other) - set(ref))
-            print(f"  {run:12s}: {len(other)} captures; identical selected+counts = {same}; "
-                  f"missing-vs-ref = {missing}; extra-vs-ref = {extra}")
+            report(f"  {run:12s}: {len(other)} captures; identical selected+counts = {same}; "
+                   f"missing-vs-ref = {missing}; extra-vs-ref = {extra}")
+
+    if args.out:
+        with open(args.out, "w") as f:
+            f.write("\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":
