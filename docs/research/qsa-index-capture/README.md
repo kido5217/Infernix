@@ -194,8 +194,9 @@ curl -s -H 'content-type: application/json' \
 - `selection-decode-16k/` — a complete 16K decode selection (`columns=1`, `max_position=22439`,
   5610 complete blocks, 1.4 MiB of plane pages). `verify_capture.py` runs on this directory and
   reproduces the recorded 512 selected blocks (`exact-set 1/1`).
-- `selection-mtp-warmup-16k/` — a complete width-1 draft-step selection (the MTP block's plane,
-  positions 12).
+- `selection-mtp-warmup-16k/` — a complete width-1 selection from the warm-up step (positions 12).
+  Width 1 is the draft-step shape (`Forward::run_mtp` requires it); the 12 attention layers run at the
+  chunk width, so this is the MTP block's selection (its plane is the 13th).
 - `selection-140k/meta.txt`, `plane-140k/meta.txt` — the metas of a ≥128K selection and plane capture
   (block counts, page counts, `pooled_ptr`); their bulk files are on this host and hashed in
   `manifest-140k.txt`.
@@ -231,8 +232,8 @@ flag and return. Evidence:
   with `kv_only`, so it selects nothing; its decode-phase selection runs inside a CUDA graph after
   the first warm-up call, and the graph reuse is not controllable from these flags. The ≥128K
   capture therefore holds the 12 QSA attention layers' selections and the MTP block's *pooled planes*
-  (the writer hook fires for it, in 512-token windows); MTP *selections* exist only in the 16K
-  capture at the warm-up positions 12–13.
+  (the writer hook fires for it: the single 512-column plane captures are its `kMtpChunkColumns = 512`
+  sub-chunk calls); MTP *selections* exist only in the 16K capture, at the warm-up width-1 step.
 - **Plane captures are per-call position windows.** A plane capture's `pooled.bin` covers all pages up
   to its own `max_position`; the full plane for a given context comes from the capture with the
   largest `max_position` for that plane, or by using `block_table.bin` to index page by page.
