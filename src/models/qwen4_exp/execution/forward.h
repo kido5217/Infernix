@@ -14,6 +14,7 @@
 #include "models/qwen4_exp/execution/parameters.h"
 #include "infernix/ops/offloaded_sparse_moe.h"
 #include "infernix/ops/qsa.h"
+#include "ops/qsa/qsa_capture.h"
 #include "infernix/ops/rope.h"
 
 #include <array>

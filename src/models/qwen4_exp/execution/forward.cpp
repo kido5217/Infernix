@@ -169,6 +169,7 @@ void Forward::wait_layer(const ForwardBatch& batch, std::size_t entry) {
 
 void Forward::run(const ForwardBatch& batch, Tensor& logits, const ForwardTap* tap) {
     begin_call(batch, &logits);
+    ops::capture::step_begin(batch.positions, device_.stream);
     Tensor residual = work_.alloc(DType::BF16, {dim(config_.residual_width()), batch.ids.ne[0]});
     embed(batch, residual);
     for (std::uint32_t l = 0; l < config_.num_hidden_layers; ++l) { layer(l, batch, residual, tap); }

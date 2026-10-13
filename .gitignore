@@ -79,3 +79,6 @@ profiles/
 
 # Claude Code personal/local settings (may contain API tokens)
 .claude/settings.local.json
+
+# Raw capture sample committed for docs/research/qsa-index-capture (ticket #40).
+!docs/research/qsa-index-capture/sample/**

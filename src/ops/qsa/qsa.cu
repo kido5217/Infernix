@@ -15,6 +15,7 @@
 #include "ops/kv_cache/q4_lloyd_codec.cuh"
 #include "ops/kv_cache/vq2_codec.cuh"
 #include "ops/qsa/page_spaces.cuh"
+#include "ops/qsa/qsa_capture.h"
 #include "ops/qsa/qsa_prompt.h"
 #include "ops/qsa/qsa_select.h"
 #include "ops/qsa/vq_window.cuh"
@@ -1028,6 +1029,7 @@ void qsa_pool_keys(const Tensor& raw_keys, const Tensor& norm_weight, Tensor& ta
         geometry.rotary_dim, geometry.theta, index_rope(geometry), geometry.eps,
         static_cast<bf16*>(layer.pooled_pages.data), layer.spaces);
     check_launch("pool");
+    capture::plane(layer.pooled_pages, batch, geometry, stream);
     if (!batch.update_tails) { return; }
     tail_kernel<<<batch.batch, kIndexDim, 0, stream>>>(
         static_cast<const bf16*>(raw_keys.data), static_cast<const std::int32_t*>(batch.positions.data),

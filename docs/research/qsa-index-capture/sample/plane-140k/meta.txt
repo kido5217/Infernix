@@ -1,0 +1,22 @@
+captured_at 2026-10-13T08:54:58Z
+kind plane
+step 2
+plane_call 1
+layer_call 396
+batch 1
+width 4096
+columns 4096
+positions_count 4096
+geometry heads=24 kv_heads=2 head_dim=256 index_heads=4 index_head_dim=128 rotary_dim=64 budget=2048 ratio=4 theta=1e+07 eps=1e-06 yarn_factor=4 original_positions=262144
+plane_slots 32
+plane_layout [Di/ratio, 64, 1, pages] contiguous; element(slots*page_i, slot) = slots*64*page + slots*(token&63) + slot, page = block_table[token>>6]; pooled.bin holds the used plane pages in token-page order (page j at byte offset j*plane_page_bytes)
+bytes_per_token_per_layer 64
+bytes_per_block_per_layer 256
+min_position 131072
+max_position 135167
+complete_blocks 33792
+plane_pages_used 2112
+plane_page_bytes 4096
+pooled_ptr 13003427840
+pooled ne=[32,64,1,2305] dtype=0 numel=4720640 bytes=9441280
+block_tables ne=[2304,1,1,1] dtype=2 numel=2304 bytes=9216

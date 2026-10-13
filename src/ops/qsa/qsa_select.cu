@@ -4,6 +4,7 @@
 #include "ops/qsa/qsa_select.h"
 
 #include "ops/qsa/page_spaces.cuh"
+#include "ops/qsa/qsa_capture.h"
 
 #include "core/device.h"
 #include "core/paged_kv_cache.h"
@@ -912,6 +913,7 @@ void qsa_select(const Tensor& index_q, const Tensor& pooled_pages, const QsaBatc
                                         static_cast<const float*>(scores), l.stride, histograms, arrivals,
                                         output.selected, output.counts));
     }
+    capture::selection(index_q, pooled_pages, batch, geometry, max_context, output, stream);
 }
 
 } // namespace infernix::ops::detail
