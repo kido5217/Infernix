@@ -1197,8 +1197,13 @@ How each part handles the profiles:
   - While the visible context is ≤ 2,051 tokens, every token is selected, and QSA equals dense
     causal attention. The existing prompt kernels serve it, with their P×V options
     (`--prefill-8bit-pv`) unchanged.
-  - Beyond that, the prompt kernel processes a tile of queries against the union of their selected
-    blocks with a per-query mask. It uses the same tile loaders.
+  - Beyond that, the built prompt kernel is one CTA per `(column, kv_head)`: each column gathers its
+    own selected blocks. A shared tile over the union of a query tile's selected blocks with a
+    per-query mask was evaluated and **rejected** (issue #2, 2026-10-13): a column's state is four
+    warps with 255 registers per thread, so an exactness-preserving shared CTA can keep at most two
+    columns' accumulators live, and at two columns the union saves 27.5 % of the loads at >= 128K —
+    below the 30 % the evaluation pre-registered, against 58.7 % at a tile of eight that the register
+    file cannot hold.
 - **Cost.** K3b reads 2.2 MB per layer per token with `int8`, 4.2 MB with `bf16` and 0.54 MB with
   `vq2`. The decode-time difference across profiles is ≤ 0.04 ms per token. The profiles' real
   effect is **VRAM**: at 256K, `int8` KV is 3.8 GB, 1,381 frames, before the host tier (§9.6) takes
