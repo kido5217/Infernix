@@ -297,9 +297,9 @@ with a nearly saturated small pool.
   `complete_blocks <= 512` and the engine short-circuits QSA to dense causal; that is 24,612 chunk ×
   layer rows, excluded and counted (`per_chunk_layer.tsv`, `dense_columns`). **0 at 140K.**
 - **Coverage.** Positions are what was captured, not the whole prompt. The 140K capture arms on
-  `MIN_POS=131072` and its selection captures cover positions 131072…141695 — the last 10,624
-  positions of the 141,703-token prompt; the prompt's final 7 positions (one open tail) are after the
-  capture and are not in `selected.bin`. So the 140K ratio describes the ≥128K regime, not a from-zero
+  `MIN_POS=131072` and its selection captures cover positions 131072…141695 (10,624 positions); the
+  prompt runs to position 141702, and its final 7 positions (one open tail) are after the capture and
+  are not in `selected.bin`. So the 140K ratio describes the ≥128K regime, not a from-zero
   140K prompt. The 16K capture covers positions 0…22425 — all but the final 7-token tail of the
   22,433-token prompt.
 - The open tail (the `position % 4` tokens after the last complete block) is outside `selected.bin` and
