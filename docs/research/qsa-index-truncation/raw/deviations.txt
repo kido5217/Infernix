@@ -1,0 +1,47 @@
+Deviations / interpretations recorded before any arm's agreement was read.
+
+D1  Scale-group alignment.  The paper's 64-token block is 16 consecutive captured 4-token blocks
+    starting at block 0, i.e. exactly one pooled-plane token page (page = block>>4).  The capture's
+    plane is indexed by absolute token, so group g = page g.  Reason: the protocol fixes one fp16
+    scale per channel per 16 captured blocks; the page is the only 64-token unit the build has.
+D2  A1 is the paper's single 4-bit quantization shifted.  Per channel j and 16-block group, the
+    scale a = max over the group's 16 pooled block keys of |key| (fp16-rounded, as stored); s = a/8;
+    c4 = clip(floor(key/s), -8, 7) + 8 (MSB sign, code 8 = zero).  A1(t) reads c_t = c4 >> (4-t)
+    and reconstructs (c_t + 1/2 - 2^(t-1)) * a/2^(t-1), the paper's t-bit mid-rise quantizer.  The
+    true keys are the pooled block keys, not raw per-token keys (not captured); a is the max of
+    those stored keys.
+D3  A1(t) stores a t-bit code (the protocol's byte table 16t+16); the paper stores 4 bits and reads
+    t planes -- byte-equivalent for the read.
+D4  A2 truncates each BF16 word's leading m bits, zeroes the rest, and reads the word back as BF16
+    with no rounding; A2(16) equals A0 by construction.
+D5  A3 V1 (paper's rule, gating).  Per capture (one layer call) Var(k_j) is the variance of channel
+    j over that capture's stored block keys; g_j = sum_h (q_j^(h))^2 Var(k_j).  A depth vector
+    t in [0,4]^128 per column is produced by bisecting the water line theta so that sum_j t_j <= B
+    (30 bisections on log theta over [log 0.001, log 10], the paper's bracket).
+D6  A3 V2 (per-block variant, reported, non-gating).  a_{beta,j}^2 replaces Var(k_j); because a is
+    constant over the 16 blocks of a group it is constant per (group, channel), so the depth vector
+    is per (group, column) and each block reads its group's depth.
+D7  Rank agreement (section 3.1) = |A0_top64 intersect arm_top64| / 64, where A0_top64 is the 64
+    highest-scoring blocks under A0's own scores (the engine's captured scores where the column is
+    scored, else the recomputed full-BF16 scores).  selected.bin is ascending, so rank comes from
+    the scores; "in rank order" is read as "A0's top 64 by rank" (no positional correlation).
+D8  A3 budget calibration (equal mean bits, section 4).  A4 = A1(t*) for the smallest t clearing
+    the bar; its mean bits/block = 128*(t*+1).  The A3 budget B is bisected (integer grid, mean
+    bits monotone in B) so the variant's mean bits/block over the context's non-dense columns is
+    within +/-2 % of A4's.  The calibration uses a deterministic sample (first 64 non-dense columns
+    of each capture) and bits only, never agreement; the realized full-data mean bits are reported.
+D9  Score error (section 3.2) e = sum_b |s_arm,b - s_A0,b| / (n * (max s_A0 - min s_A0)) over the
+    scored columns only, against A0's captured scores, reported as each layer's mean.
+D10 Bytes/frames.  Plane total = bytes/block * complete blocks of the deepest captured column
+    (16k: 5610; 140k: 35426).  Expert frames = plane bytes / 2,764,800 B (the measured routed-expert
+    frame).  Reported per layer and for all 13 planes.
+D11 Time (section 3.4, non-gating).  No device scan exists here.  Reported: the prototype's wall
+    time per stage (numpy score+select, CPU) and the modelled device bandwidth floor (bytes / 1.7
+    TB/s) from the research note.  Neither gates.
+D12 Layer identity.  No explicit QSA layer index exists; a layer is its plane pointer (pooled_ptr),
+    ranked per run after sorting (13 distinct values; index 12 is the MTP plane).
+D13 Contexts are scored separately (section 7.12); 16K is the trend, the bar applies at 140K only.
+D14 Dense columns (counts == -1, n <= 512) are excluded from every metric and counted as excluded.
+D15 Input identity.  The vendored manifests are the hash record; the run checks every file it reads
+    against the manifest and records combined digests in input_hashes.txt.
+D16 The query is never quantized: arms coarsen the keys only.

@@ -1,0 +1,13 @@
+{
+  "score_checked": 5132,
+  "max_abs": 4.76837158203125e-06,
+  "max_scaled": 4.653191751913255e-07,
+  "ids_checked": 128012,
+  "exact": 127971,
+  "explained": 41,
+  "unexplained": 0,
+  "dense": 0,
+  "captures": 260,
+  "cols_non_dense": 128012,
+  "cap_max_err": 4.76837158203125e-06
+}
