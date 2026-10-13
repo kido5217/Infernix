@@ -119,6 +119,53 @@ Also rejected for the same trade-off: 16-bit MLP activations in prefill (table 3
 activation path would need FP4 x FP8 block-scaled MMA, which takes UE8M0 scales per 32 values,
 not NVFP4's E4M3 scales per 16.
 
+### 3.5 Rejected: truncated QSA index planes
+
+QSA selects the blocks a query attends to by scoring every complete 4-token block against its pooled
+index key, one 128-wide BF16 key per block per QSA layer (256 B per block, 13 planes per lane, 832 B
+per token; [the design record](qwen3_8-flash-next-design.md#96-long-context-qsa-kv-host-tier) owns the
+plane's geometry). A coarser plane would read fewer bytes and return frames to the expert cache if the
+key's low-order bits carried little ranking information. Measured against the pre-registered bar of
+[ticket #39](https://github.com/kido5217/Infernix/issues/39) — selected-set agreement with the
+full-BF16 top-512 selection, per layer per step, must reach a cross-layer mean of 0.95, with no layer
+below 0.90 and a best-to-worst layer spread of at most 0.10 — on the engine's own captured keys at the
+capture's 16K and 140K contexts (140K is the bar's >= 128K point;
+[ticket #40](https://github.com/kido5217/Infernix/issues/40); prototype and raw per-layer output on the
+unmerged branch `proto/qsa-index-truncation`,
+[ticket #41](https://github.com/kido5217/Infernix/issues/41)):
+
+| store per block | bytes | vs BF16 | mean agreement, >= 128K | worst layer |
+|---|---|---|---|---|
+| BF16 leading 12 bits | 192 | 1.33x | 0.9618 | 0.9485 |
+| BF16 leading 10 bits | 160 | 1.6x | 0.8575 | |
+| BF16 leading 8 bits | 128 | 2.0x | 0.5203 | |
+| uniform 4-bit code (3 planes) | 64 | 4.0x | 0.8421 | |
+| uniform 4-bit code (4 planes) | 80 | 3.2x | **0.9213** | **0.8951** |
+| uniform 4-bit code (2 planes) | 48 | 5.3x | 0.6997 | |
+| uniform 4-bit code (1 plane) | 32 | 8.0x | 0.4491 | |
+
+Not adopted. The 4-bit store is the arm the bar gated, and it fails both agreement conditions; the
+only *byte-saving* arm that meets the three numeric conditions is the 12-bit BF16 cut, which saves
+1.33x — about 0.9 % of the expert cache at 256K with four lanes, and far less at shorter contexts —
+while requiring the pooled plane's layout to change and every reader (the pooling writer, the
+Program's plane allocation, selection, attention and prompt) to unpack it. The paper behind the idea
+prices bit extraction at one to two integer operations per bit read, four times the per-bit cost of a
+nibble scan, and this engine's own scan curve (2x time over 16x bytes from 8K to 128K) is the
+signature of a latency-dominated scan rather than a bandwidth-bound one — so a smaller plane's byte
+saving is plausible as a time saving but unevidenced, and it was not required to be.
+
+The water-filling read depth that motivated the per-query budget degenerates on this index: the
+budget the bar hands it is the depth rule's own maximum, so the constraint never binds and depth 4
+lands on every channel. That is a measured property of the rule on these keys, not an implementation
+shortcut.
+
+Support would require a representation that reaches 0.95 agreement at a materially larger byte
+saving (at least 3x), or index-plane pressure the deployed contexts do not have: the plane is 208 MiB
+per lane at 256K and 832 MiB at 1M, against an expert pool of roughly 8,300 frames ([the design
+record](qwen3_8-flash-next-design.md) §4.2). The bar's numbers come from a CPU-only prototype over
+captures from engine revision `51601ea2` (2026-10-13), not from the GPU measurement the rest of this
+section describes.
+
 ## 4. Qwen3.8-Flash-Next: NVFP4 artifact against the Unsloth UD-Q4_K_XL GGUF
 
 This compares Infernix's Flash-Next artifact, which imports NVIDIA's NVFP4 checkpoint
