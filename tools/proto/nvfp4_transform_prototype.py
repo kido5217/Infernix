@@ -22,11 +22,31 @@ Usage (inside the repo dev shell, CUDA not required):
     # 3. The measurement.
     python3 -m tools.proto.nvfp4_transform_prototype --activations capture.npz --out report.json
 
+    # 4. (optional) Regenerate the pre-fix DualQuant sensitivity report.  ``--bcd-variant released``
+    #    swaps G3/X1's DualQuant for the released implementation's reciprocal beta init and its
+    #    2^-6 E4M3 projection floor (the two defects corrected before the reported run), which is
+    #    what the committed ``…report.bcd-reciprocal.json`` was produced with.
+    python3 -m tools.proto.nvfp4_transform_prototype --activations capture.npz \
+        --bcd-variant released --out report.bcd-reciprocal.json
+
 S1 is read from the fixed path in ``S1_ROOT`` below; both roots are recorded in the report.
 
 The script reuses the repo's own codec (``tools/convert/quantization/nvfp4.py``,
 ``tools/artifact/codecs/nvfp4_expert.py``, ``tools/flash_next/a4_reference.py``); it
 re-implements the OSFP4 optimizer and the DualQuant BCD from their papers (nothing is vendored).
+
+Report self-description.  ``environment`` carries the interpreter, the torch/numpy versions and the
+git sha of this checkout; ``reproduction`` carries the exact capture, self-check and report
+commands, derived from this process's own argv and executable plus the module's frozen S2 root,
+gating layers and prompt tokens (never a hand-typed string), as both argv lists and shell lines.
+Every arm record in ``matrices`` carries the actual per-matrix ``weight_divisor`` (binary32) and
+``weight_target`` as well as the ``activation_divisor`` (binary32) and ``activation_target``, so the
+divisor choice is auditable per matrix and not only named as a rule.  G3/X1 additionally carry
+their existing ``fold_relative_l2`` plus a new ``e_no_fold`` (the same arm scored with the fold
+disabled: alpha_inv applied exactly as a separate per-output-row weight scale instead of being
+folded, and re-rounded, into the stored E4M3 block scale); their difference isolates the fold's
+contribution, summarized in the top-level ``g3_fold_diagnostic``.  The top-level ``bcd_variant``
+records which DualQuant variant produced G3/X1.
 """
 
 from __future__ import annotations
@@ -37,7 +57,10 @@ import glob
 import hashlib
 import json
 import math
+import shlex
 import struct
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -443,13 +466,29 @@ def osfp4_select_scale_words(wg, divisor: float, gamma_w, metric) -> torch.Tenso
 # per-group absmax-to-6 E4M3 scale + E2M1 code).
 
 
-def dualquant_bcd(W64: torch.Tensor, *, iterations: int = 15):
+def dualquant_bcd(W64: torch.Tensor, *, iterations: int = 15, variant: str = "paper"):
+    """DualQuant's dual-scale BCD (paper Algorithm 1).
+
+    ``variant`` selects the beta initialization and the E4M3 projection floor:
+
+    - ``paper`` — the paper's ``beta_0,j = sum_i |W_ij|`` and a floor at the smallest positive
+      E4M3 value ``2^-9`` (the admissible set includes E4M3 subnormals).  This is the reported run.
+    - ``released`` — the released implementation's reciprocal init ``beta = 1 / sum_i |W_ij|`` and
+      a floor at the smallest E4M3 *normal* ``2^-6``.  These are the two pre-fix defects the
+      prototype corrected; this variant exists only to regenerate the committed
+      ``…report.bcd-reciprocal.json`` sensitivity report.  It is not a candidate arm.
+    """
+
+    if variant not in ("paper", "released"):
+        raise ValueError(f"unknown DualQuant variant {variant!r}")
     W = W64.to(F32)
     eps = 1e-8
-    # Projection floor: the smallest positive E4M3 value (the paper's admissible set includes
-    # E4M3 subnormals; clamping at the smallest *normal* would reject admissible scales).
-    floor = 2.0 ** -9
-    beta = W.abs().sum(dim=0).clamp(min=eps)              # paper init: beta_0 = per-column l1 norm
+    if variant == "paper":
+        floor = 2.0 ** -9
+        beta = W.abs().sum(dim=0).clamp(min=eps)              # paper init: beta_0 = per-column l1 norm
+    else:
+        floor = 2.0 ** -6
+        beta = 1.0 / W.abs().sum(dim=0).clamp(min=eps)        # released init: reciprocal l1 norm
     beta_inv = 1.0 / beta
     row_scale = (W * beta[None, :]).abs().amax(dim=1).clamp(min=eps) / 6.0
     alpha_inv = row_scale                                   # paper init: format-native absmax row scale
@@ -570,17 +609,30 @@ def _osfp4_selection(weight: torch.Tensor, activation: torch.Tensor):
     return divisor, scales
 
 
-def run_arms(weight: torch.Tensor, activation: torch.Tensor) -> dict[str, dict]:
-    """Evaluate C1, C2, G1, G2, G3, X1 on one matrix; return each arm's primary and secondary."""
+def run_arms(weight: torch.Tensor, activation: torch.Tensor, *,
+             bcd_variant: str = "paper") -> dict[str, dict]:
+    """Evaluate C1, C2, G1, G2, G3, X1 on one matrix; return each arm's primary and secondary.
+
+    Every arm record carries the *actual* per-matrix weight and activation divisors used (their
+    binary32 stored values) together with the target each was derived from, so the divisor choice
+    is auditable per matrix and not only named as a rule.  ``bcd_variant`` selects G3/X1's
+    DualQuant variant (see :func:`dualquant_bcd`); it does not add an arm.
+    """
 
     oracle = weight @ activation
     norm = float(oracle.norm())
     results: dict[str, dict] = {}
 
-    def finish(name: str, y_arm: torch.Tensor, weight_effective: torch.Tensor, extra=None) -> None:
+    def finish(name: str, y_arm: torch.Tensor, weight_effective: torch.Tensor, *,
+               weight_divisor: float, weight_target: float, activation_divisor: float,
+               activation_target: float, extra=None) -> None:
         mean, worst = _secondary(weight_effective, weight)
         entry = {"e": float((y_arm - oracle).norm() / norm),
-                 "secondary_mean": mean, "secondary_worst": worst}
+                 "secondary_mean": mean, "secondary_worst": worst,
+                 "weight_divisor": f32_round(float(weight_divisor)),
+                 "weight_target": float(weight_target),
+                 "activation_divisor": f32_round(float(activation_divisor)),
+                 "activation_target": float(activation_target)}
         if extra:
             entry.update(extra)
         results[name] = entry
@@ -588,14 +640,18 @@ def run_arms(weight: torch.Tensor, activation: torch.Tensor) -> dict[str, dict]:
     # C1 -- repo absmax (target 6)
     divisor = divisor_for(float(weight.abs().max()), ABSMAX_TARGET)
     _, represented = quantize_weight(weight, divisor, "absmax")
-    activation_q, _ = _a4_pair(activation, ABSMAX_TARGET)
-    finish("C1", represented @ activation_q, represented)
+    activation_q, act_divisor = _a4_pair(activation, ABSMAX_TARGET)
+    finish("C1", represented @ activation_q, represented,
+           weight_divisor=divisor, weight_target=ABSMAX_TARGET,
+           activation_divisor=act_divisor, activation_target=ABSMAX_TARGET)
 
     # C2 -- repo MSE (target 4)
     divisor = divisor_for(float(weight.abs().max()), MSE_TARGET)
     _, represented = quantize_weight(weight, divisor, "mse")
-    activation_q, _ = _a4_pair(activation, MSE_TARGET)
-    finish("C2", represented @ activation_q, represented)
+    activation_q, act_divisor = _a4_pair(activation, MSE_TARGET)
+    finish("C2", represented @ activation_q, represented,
+           weight_divisor=divisor, weight_target=MSE_TARGET,
+           activation_divisor=act_divisor, activation_target=MSE_TARGET)
 
     # G1 -- OSFP4 diagonal smoothing A (W A^-1 quantized by C2's MSE rule; A X on activations)
     alpha = _osfp4_alpha(weight, activation)
@@ -604,19 +660,23 @@ def run_arms(weight: torch.Tensor, activation: torch.Tensor) -> dict[str, dict]:
     transformed = weight / alpha64[None, :]
     divisor = divisor_for(float(transformed.abs().max()), MSE_TARGET)
     _, represented = quantize_weight(transformed, divisor, "mse")
-    activation_q, _ = _a4_pair(round_bf16(activation * alpha64[:, None]), MSE_TARGET)
-    finish("G1", represented @ activation_q, represented * alpha64[None, :])
+    activation_q, act_divisor = _a4_pair(round_bf16(activation * alpha64[:, None]), MSE_TARGET)
+    finish("G1", represented @ activation_q, represented * alpha64[None, :],
+           weight_divisor=divisor, weight_target=MSE_TARGET,
+           activation_divisor=act_divisor, activation_target=MSE_TARGET)
 
     # G2 -- OSFP4 calibrated E4M3 block-scale selection, no smoothing
     divisor, scales = _osfp4_selection(weight, activation)
     step = (e4m3_values(scales) / divisor).contiguous()
     codes = pack_e2m1_codes(weight.to(F32), step)
     represented = dequantize_words(codes, scales, divisor)
-    activation_q, _ = _a4_pair(activation, MSE_TARGET)
-    finish("G2", represented @ activation_q, represented)
+    activation_q, act_divisor = _a4_pair(activation, MSE_TARGET)
+    finish("G2", represented @ activation_q, represented,
+           weight_divisor=divisor, weight_target=MSE_TARGET,
+           activation_divisor=act_divisor, activation_target=MSE_TARGET)
 
     # G3 -- DualQuant alpha/beta BCD on top of C2's rule
-    alpha, _, alpha_inv, beta_inv = dualquant_bcd(weight)
+    alpha, _, alpha_inv, beta_inv = dualquant_bcd(weight, variant=bcd_variant)
     alpha64 = alpha.to(F64)
     beta = (1.0 / beta_inv).to(F64)
     beta_inv64 = beta_inv.to(F64)
@@ -625,26 +685,37 @@ def run_arms(weight: torch.Tensor, activation: torch.Tensor) -> dict[str, dict]:
     words, _ = quantize_weight(transformed, divisor, "mse")
     folded = fold_row_scale(words, alpha_inv)
     represented = dequantize_words(words.codes, folded, divisor)
-    activation_q, _ = _a4_pair(round_bf16(activation * beta_inv64[:, None]), MSE_TARGET)
+    activation_q, act_divisor = _a4_pair(round_bf16(activation * beta_inv64[:, None]), MSE_TARGET)
     unfolded = dequantize_words(words.codes, words.scales, divisor) * alpha_inv.to(F64)[:, None]
-    fold_extra = {
-        "fold_word_changed_fraction": float((folded != words.scales).to(F64).mean()),
-        "fold_relative_l2": float((represented - unfolded).norm() / unfolded.norm()),
-    }
-    finish("G3", represented @ activation_q, represented * beta_inv64[None, :], fold_extra)
+    finish("G3", represented @ activation_q, represented * beta_inv64[None, :],
+           weight_divisor=divisor, weight_target=MSE_TARGET,
+           activation_divisor=act_divisor, activation_target=MSE_TARGET,
+           extra={
+               "bcd_variant": bcd_variant,
+               "fold_word_changed_fraction": float((folded != words.scales).to(F64).mean()),
+               "fold_relative_l2": float((represented - unfolded).norm() / unfolded.norm()),
+               "e_no_fold": float((unfolded @ activation_q - oracle).norm() / norm),
+           })
 
     # X1 -- G3's transform on C1's absmax rule (exploratory, non-gating)
     divisor = divisor_for(float(transformed.abs().max()), ABSMAX_TARGET)
     words, _ = quantize_weight(transformed, divisor, "absmax")
     folded = fold_row_scale(words, alpha_inv)
     represented = dequantize_words(words.codes, folded, divisor)
-    activation_q, _ = _a4_pair(round_bf16(activation * beta_inv64[:, None]), ABSMAX_TARGET)
+    activation_q, act_divisor = _a4_pair(round_bf16(activation * beta_inv64[:, None]), ABSMAX_TARGET)
     unfolded = dequantize_words(words.codes, words.scales, divisor) * alpha_inv.to(F64)[:, None]
     finish("X1", represented @ activation_q, represented * beta_inv64[None, :],
-           {"fold_word_changed_fraction": float((folded != words.scales).to(F64).mean()),
-            "fold_relative_l2": float((represented - unfolded).norm() / unfolded.norm())})
+           weight_divisor=divisor, weight_target=ABSMAX_TARGET,
+           activation_divisor=act_divisor, activation_target=ABSMAX_TARGET,
+           extra={
+               "bcd_variant": bcd_variant,
+               "fold_word_changed_fraction": float((folded != words.scales).to(F64).mean()),
+               "fold_relative_l2": float((represented - unfolded).norm() / unfolded.norm()),
+               "e_no_fold": float((unfolded @ activation_q - oracle).norm() / norm),
+           })
 
     return results
+
 
 
 # ---------------------------------------------------------------------------- bar
@@ -803,7 +874,134 @@ INTERPRETATIONS = [
     "Activation provenance fallback: the reported run uses the forward capture; the --synthetic path "
     "is a fixed-seed (seed 0) standard-normal batch rescaled per gating layer to the S2 input_scale's "
     "associated activation absmax 448*6/g, recorded but not exercised.",
+    "Reported divisors: every arm record carries the actual per-matrix weight divisor (its binary32 "
+    "stored value) and the target it was derived from, plus the same for the activation divisor, so "
+    "the divisor choice is auditable per matrix and not only named as a rule.  Both come from "
+    "weight_divisor(amax, target); the value is already binary32 and is stored verbatim.",
+    "Self-description: the `reproduction` block records the exact capture, self-check and report "
+    "commands, built from this process's argv and executable plus the module's frozen S2 root, "
+    "gating layers and prompt tokens (never a hand-typed string); `environment` records the "
+    "interpreter, torch/numpy versions and the git sha of this checkout.",
+    "Alpha-fold attribution (G3/X1).  `fold_relative_l2` is the fold's own re-rounding loss: the "
+    "relative L2 distance between the folded representation (alpha_inv multiplied into, and "
+    "re-rounded within, the stored E4M3 block scale) and the same representation with alpha_inv "
+    "applied exactly.  `e_no_fold` re-scores the arm with the fold disabled, i.e. alpha_inv carried "
+    "as an exact separate per-output-row weight scale instead of folded into the block scale; "
+    "`e - e_no_fold` isolates the fold's contribution to G3's primary metric.  The top-level "
+    "`g3_fold_diagnostic` summarizes it.  The prototype's earlier causal wording (that the fold's "
+    "re-rounding loss 'causes' G3's gating loss) is superseded by that measured separation.",
+    "Pre-fix sensitivity: `--bcd-variant released` reproduces the committed "
+    "`…report.bcd-reciprocal.json` by running G3/X1 with the released DualQuant implementation's "
+    "reciprocal beta init (beta = 1 / sum_i |W_ij|) and E4M3 projection floor 2^-6 in place of the "
+    "paper's beta_0,j = sum_i |W_ij| and 2^-9 floor.  It changes only G3/X1, is not a candidate arm, "
+    "and does not gate; `bcd_variant` records which variant was run.",
 ]
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _module_name() -> str:
+    """This module's dotted name (``tools.proto.nvfp4_transform_prototype``)."""
+
+    try:
+        relative = Path(__file__).resolve().relative_to(_repo_root())
+        return ".".join(relative.with_suffix("").parts)
+    except ValueError:
+        return Path(__file__).stem
+
+
+def _git_sha() -> str | None:
+    """The checkout's HEAD sha, read from git; ``None`` when the tree is not a git checkout."""
+
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(_repo_root()), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+        return completed.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _sibling_output(stem: str, suffix: str) -> Path:
+    return Path(__file__).resolve().parent / f"{stem}.{suffix}"
+
+
+def reproduction_block(args) -> dict:
+    """The exact capture / self-check / report commands, derived from this process, not typed.
+
+    ``sys.executable`` and ``sys.argv`` supply the interpreter and the report invocation; the
+    capture command is rebuilt from the frozen ``S2_ROOT``, ``GATING_LAYERS`` and ``PROMPT_TOKENS``
+    constants and the activation file this run consumed; the self-check command targets the module's
+    canonical ``…selfcheck.json`` sibling.  Each command is recorded both as an argv list (exact) and
+    as a shell-quoted line.
+    """
+
+    python = sys.executable or "python3"
+    module = _module_name()
+    capture_out = str(args.activations) if args.activations else "capture.npz"
+    commands = {
+        "capture": [python, "-m", "tools.flash_next.reference",
+                    "--model", str(S2_ROOT),
+                    "--layers", str(max(GATING_LAYERS) + 1),
+                    "--tokens", ",".join(str(token) for token in PROMPT_TOKENS),
+                    "--record-taps", ",".join(str(layer) for layer in GATING_LAYERS),
+                    "--out", capture_out],
+        "self_check": [python, "-m", module, "--self-check",
+                       "--out", str(_sibling_output(Path(__file__).stem, "selfcheck.json"))],
+        "report": [python, "-m", module, *sys.argv[1:]],
+    }
+    return {
+        "python_executable": python,
+        "module": module,
+        "commands": commands,
+        "shell": {name: " ".join(shlex.quote(part) for part in argv)
+                  for name, argv in commands.items()},
+    }
+
+
+def fold_diagnostic(rows: list[dict]) -> dict:
+    """Isolate G3's alpha-fold re-rounding contribution on the gating set (finding 4).
+
+    ``e - e_no_fold`` is the fold's contribution to the primary metric on each matrix.  The two
+    median relative reductions (best per-matrix control = min(C1, C2), the bar's own control) show
+    the fold's share of G3's shortfall from the bar: with the fold disabled G3's shortfall is
+    smaller, so the fold is separable from the rest of G3's transform.
+    """
+
+    if not rows:
+        return {}
+    folded = np.array([row["arms"]["G3"]["e"] for row in rows])
+    no_fold = np.array([row["arms"]["G3"]["e_no_fold"] for row in rows])
+    fold_l2 = np.array([row["arms"]["G3"]["fold_relative_l2"] for row in rows])
+    control = np.array([min(row["arms"]["C1"]["e"], row["arms"]["C2"]["e"]) for row in rows])
+    reduction_folded = float(np.median((control - folded) / control))
+    reduction_no_fold = float(np.median((control - no_fold) / control))
+    shortfall_folded = -reduction_folded
+    shortfall_no_fold = -reduction_no_fold
+    contribution = folded - no_fold
+    worst = int(np.argmax(contribution))
+    return {
+        "arm": "G3",
+        "matrices": len(rows),
+        "median_e_folded": float(np.median(folded)),
+        "median_e_no_fold": float(np.median(no_fold)),
+        "median_fold_relative_l2": float(np.median(fold_l2)),
+        "median_fold_contribution": float(np.median(contribution)),
+        "worst_fold_contribution": float(contribution[worst]),
+        "worst_fold_matrix": rows[worst]["matrix_id"],
+        "median_relative_reduction_folded": reduction_folded,
+        "median_relative_reduction_no_fold": reduction_no_fold,
+        "fold_share_of_median_shortfall": (shortfall_folded - shortfall_no_fold) / shortfall_folded,
+        "attribution_isolated": True,
+        "note": "e - e_no_fold isolates the alpha-fold E4M3 re-rounding; e_no_fold carries "
+                "alpha_inv exactly as a separate per-output-row weight scale instead of folding it "
+                "into the block scale.  The fold accounts for only part of G3's shortfall: the "
+                "remainder is G3's own transform, so the earlier claim that the fold 'causes' G3's "
+                "loss is superseded by these two measured reductions.",
+    }
 
 
 def print_report(report: dict) -> None:
@@ -828,6 +1026,17 @@ def print_report(report: dict) -> None:
             print(f"  {arm}: median {stats['median_e']:.5f}  range [{stats['min_e']:.5f}, "
                   f"{stats['max_e']:.5f}]  worst {stats['worst_matrix']}  "
                   f"wins {stats['wins_vs_best_control']}/{stats['matrices']}")
+    diagnostic = report.get("g3_fold_diagnostic")
+    if diagnostic:
+        print(f"\n== G3 alpha-fold diagnostic (gating S1) ==")
+        print(f"  median e folded {diagnostic['median_e_folded']:.5f}  no-fold "
+              f"{diagnostic['median_e_no_fold']:.5f}  fold contribution "
+              f"{diagnostic['median_fold_contribution']:.5f}  median fold_relative_l2 "
+              f"{diagnostic['median_fold_relative_l2']:.5f}")
+        print(f"  median relative reduction folded "
+              f"{diagnostic['median_relative_reduction_folded']:.5f}  no-fold "
+              f"{diagnostic['median_relative_reduction_no_fold']:.5f}  "
+              f"fold share of shortfall {diagnostic['fold_share_of_median_shortfall']:.3f}")
 
 
 def main(argv=None) -> int:
@@ -839,6 +1048,9 @@ def main(argv=None) -> int:
                         help="use the recorded fixed-seed synthetic fallback instead of a capture")
     parser.add_argument("--dev-matrix-limit", type=int, default=0,
                         help="DEV ONLY: truncate each matrix set (voids the run)")
+    parser.add_argument("--bcd-variant", choices=("paper", "released"), default="paper",
+                        help="G3/X1 DualQuant variant: 'paper' (reported run) or 'released' "
+                             "(regenerates the pre-fix bcd-reciprocal sensitivity report)")
     args = parser.parse_args(argv)
 
     from tools.convert.sources.safetensors import SafetensorsSource
@@ -868,8 +1080,11 @@ def main(argv=None) -> int:
     report: dict = {
         "protocol": "kido5217/Infernix issue #30 pre-registration rev 5",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "environment": {"python": __import__("sys").version.split()[0],
-                        "torch": torch.__version__, "numpy": np.__version__},
+        "environment": {"python": sys.version.split()[0],
+                        "torch": torch.__version__, "numpy": np.__version__,
+                        "git_sha": _git_sha()},
+        "reproduction": reproduction_block(args),
+        "bcd_variant": args.bcd_variant,
         "seed": SEED,
         "prompt": {"text": PROMPT_TEXT, "tokens": list(PROMPT_TOKENS),
                    "token_count": len(PROMPT_TOKENS)},
@@ -889,7 +1104,7 @@ def main(argv=None) -> int:
     }
 
     for matrix in matrices:
-        arms = run_arms(matrix.oracle, matrix.activation)
+        arms = run_arms(matrix.oracle, matrix.activation, bcd_variant=args.bcd_variant)
         report["matrices"].append({
             "matrix_id": matrix.matrix_id, "source": matrix.source, "layer": matrix.layer,
             "kind": matrix.kind, "n": matrix.n, "k": matrix.k,
@@ -903,6 +1118,7 @@ def main(argv=None) -> int:
     report["bar_informational"] = {arm: bar_verdict(informational_rows, arm) for arm in GATING_ARMS}
     report["arm_summary"] = arm_summary(gating_rows)
     report["arm_summary_informational"] = arm_summary(informational_rows)
+    report["g3_fold_diagnostic"] = fold_diagnostic(gating_rows)
 
     print_report(report)
     if args.out:
