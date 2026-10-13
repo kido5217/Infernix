@@ -376,7 +376,7 @@ Literature mechanisms relevant to batch-1 decode with a hot GPU cache:
 | SP-MoE (2510.10302) | Prefetch the experts implied by draft tokens before verification | §11.4 |
 | Fiddler (2402.07033), KTransformers (SOSP'25), FreeToken q\* | CPU computes misses in place, or a balanced CPU/PCIe split | §10, §8.6 |
 | HOBBIT (2411.01433) | Low-precision copies for less important missed experts | Rejected: it changes NVIDIA's weights (§1.1) |
-| AdapMoE (2408.10284), FATE | Per-layer cache allocation; shallow layers miss more | One global pool: hard per-layer quotas lost 1-35% in replay (§9.3), and a capacity allocator fitted to the replayed hit-rate curves recovered parity, not more (+0.05% at 6.45% of the pool reallocated, §9.3). |
+| AdapMoE (2408.10284), FATE | Per-layer cache allocation; shallow layers miss more | One global pool: hard per-layer quotas lost 3-34% in replay (§9.3), and a capacity allocator fitted to the replayed hit-rate curves recovered parity, not more (+0.05% at 6.45% of the pool reallocated, §9.3). |
 | Zhang, "Reproducible evaluation of MoE expert caching" (2608.07911) | Event-atomic replay. LFRU, f / (age + 1), is the best causal policy in 12 of 13 workloads. 84-97% of the Belady gap comes from victim ranking. A learned next-use predictor did **worse** than LFRU. | Base policy of §9.3 |
 | SeqMoE (2609.12978) | A sequence predictor of expert activations several tokens ahead drives a probabilistic Belady (reported 91.7% / 97.0% hits at 25% / 45% residency) | Research option behind M1's predictor evaluation (§9.3) |
 | Local routing consistency (2505.16056) | Models with shared experts show weaker token-to-token expert reuse | Explains the modest LRU hit rates; Belady's gap is the headroom (§9.3) |
@@ -472,7 +472,8 @@ single-client decode tokens, English technical writing) were replayed through ca
 An independent data point: llama.cpp's per-layer LRU on this model (PR #27861) reports 81% / 86.9%
 / 90.2% / 98.5% at 64 / 96 / 128 / 384 slots per layer. Recipes A and B correspond to ~170 and ~200
 slots per layer, between the 90.2% and 98.5% points; LFRU over one global pool should do better
-than per-layer LRU. Other replay findings:
+than per-layer LRU — measured at the deployed capacity, a *fitted* per-layer split returns +0.05%
+against global LFRU (§9.3). Other replay findings:
 
 - Reuse distance has a median of 3 tokens.
 - Verify windows of 1, 2 and 4 tokens give the same misses per **accepted** token.
@@ -1384,12 +1385,13 @@ Further results:
      - Fractional halving is smooth: 1,024 ticks gives −6 %.
      - The FreeToken traces above were not re-run with halving (they are not in the tree).
    - No per-layer quotas. Hard partitioning lost 3-34% in replay, and the fitted alternative does no
-     better: a per-layer capacity allocator over replayed hit-rate response curves (MoE-CORE §3.1)
-     recovers the partition loss and stops there — **+0.05%** misses per generated token for **6.45%**
-     of the pool reallocated (≈0.008% per 1% of pool) — while an entropy-weighted LFRU score skew is
-     −0.21% at best and a loss above it, against a per-access replay control 8.9% worse. The one arm
-     that moves is a warm-start seed prior (−19%), which is placement, not budgeting. Measured on the
-     §19.3 recording set (replay prototype `tools/expert_cache_replay/per_layer_skew.py` on
+     better: a per-layer capacity allocator over replayed hit-rate response curves (MoE-CORE,
+     arXiv 2610.01950 §3.1) recovers the partition loss and stops there — **+0.05%** misses per
+     generated token for **6.45%** of the pool reallocated (≈0.0078% per 1% of pool) — while an
+     entropy-weighted LFRU score skew is −0.21% at best and a loss above it, against a per-access
+     replay control 8.9% worse. The one arm that wins is a warm-start seed prior (−19%), which is
+     placement, not budgeting. Measured on the eight recorded coding-agent sessions
+     (`bench/route_traces/`; replay prototype `tools/expert_cache_replay/per_layer_skew.py` on
      `proto/per-layer-residency-skew`).
    - Experts of the current and predicted groups are protected.
 2. **Admission: promote on miss, within a promotion budget.**
