@@ -1,0 +1,221 @@
+{
+  "rows": [
+    {
+      "matrix": "S2/L0/gate",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.17773438151925802,
+      "source_divisor": 15123.69140625,
+      "weight_divisor6": 15123.69140625,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L0/up",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.15234375558793545,
+      "source_divisor": 15123.69140625,
+      "weight_divisor6": 17644.306640625,
+      "divisor6_equals_source": false
+    },
+    {
+      "matrix": "S2/L0/down",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.16113281389698386,
+      "source_divisor": 16681.890625,
+      "weight_divisor6": 16681.890625,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L6/gate",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.09992327657528222,
+      "source_divisor": 14411.056640625,
+      "weight_divisor6": 26900.638671875,
+      "divisor6_equals_source": false
+    },
+    {
+      "matrix": "S2/L6/up",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.18652344960719347,
+      "source_divisor": 14411.056640625,
+      "weight_divisor6": 14411.056640625,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L6/down",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.07714843656867743,
+      "source_divisor": 34841.92578125,
+      "weight_divisor6": 34841.92578125,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L12/gate",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.20675224252045155,
+      "source_divisor": 12072.4208984375,
+      "weight_divisor6": 13001.068359375,
+      "divisor6_equals_source": false
+    },
+    {
+      "matrix": "S2/L12/up",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.2226562611758709,
+      "source_divisor": 12072.4208984375,
+      "weight_divisor6": 12072.4208984375,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L12/down",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.13867187406867743,
+      "source_divisor": 19383.88671875,
+      "weight_divisor6": 19383.88671875,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L18/gate",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.26953125838190317,
+      "source_divisor": 9972.869140625,
+      "weight_divisor6": 9972.869140625,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L18/up",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.10588728007860482,
+      "source_divisor": 9972.869140625,
+      "weight_divisor6": 25385.486328125,
+      "divisor6_equals_source": false
+    },
+    {
+      "matrix": "S2/L18/down",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.09472656296566129,
+      "source_divisor": 28376.412109375,
+      "weight_divisor6": 28376.412109375,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L24/gate",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.08998325793072581,
+      "source_divisor": 21337.302734375,
+      "weight_divisor6": 29872.22265625,
+      "divisor6_equals_source": false
+    },
+    {
+      "matrix": "S2/L24/up",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.12597656110301614,
+      "source_divisor": 21337.302734375,
+      "weight_divisor6": 21337.302734375,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L24/down",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.1308593745343387,
+      "source_divisor": 20541.134765625,
+      "weight_divisor6": 20541.134765625,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L30/gate",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.24023437779396772,
+      "source_divisor": 11189.0732421875,
+      "weight_divisor6": 11189.0732421875,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L30/up",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.1372767873108387,
+      "source_divisor": 11189.0732421875,
+      "weight_divisor6": 19580.876953125,
+      "divisor6_equals_source": false
+    },
+    {
+      "matrix": "S2/L30/down",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.08837891137227416,
+      "source_divisor": 30414.49609375,
+      "weight_divisor6": 30414.49609375,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L36/gate",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.2255859375,
+      "source_divisor": 11915.63671875,
+      "weight_divisor6": 11915.63671875,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L36/up",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.193359375,
+      "source_divisor": 11915.63671875,
+      "weight_divisor6": 13901.576171875,
+      "divisor6_equals_source": false
+    },
+    {
+      "matrix": "S2/L36/down",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.08447265671566129,
+      "source_divisor": 31820.947265625,
+      "weight_divisor6": 31820.947265625,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L42/gate",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.18066405784338713,
+      "source_divisor": 14878.443359375,
+      "weight_divisor6": 14878.443359375,
+      "divisor6_equals_source": true
+    },
+    {
+      "matrix": "S2/L42/up",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.15485490672290325,
+      "source_divisor": 14878.443359375,
+      "weight_divisor6": 17358.18359375,
+      "divisor6_equals_source": false
+    },
+    {
+      "matrix": "S2/L42/down",
+      "match": 102400,
+      "total": 102400,
+      "decoded_amax": 0.10986328264698386,
+      "source_divisor": 24466.7734375,
+      "weight_divisor6": 24466.7734375,
+      "divisor6_equals_source": true
+    }
+  ],
+  "all_match": true
+}

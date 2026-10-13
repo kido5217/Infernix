@@ -149,6 +149,17 @@ class Experts:
             self._matrix(leaf + "down_proj", (h, i)),
         )
 
+    def intermediate(self, layer: int, expert: int, x_bf16: torch.Tensor) -> torch.Tensor:
+        """The expert's BF16 FFN intermediate ``h = bf16(silu(g) * u)`` on rows x [n, H].
+
+        This is the GEMM input of the expert's ``down_proj`` (the ``K = I`` activation tap the
+        prototype records); ``forward`` is its composition with the down projection.
+        """
+        (wg, sg), (wu, su), _ = self.get(layer, expert)
+        g = bf16(a4_dequantized(x_bf16, sg) @ wg.T)
+        u = bf16(a4_dequantized(x_bf16, su) @ wu.T)
+        return bf16(silu(g) * u)
+
     def forward(self, layer: int, expert: int, x_bf16: torch.Tensor) -> torch.Tensor:
         """One routed expert on rows x [n, H] (BF16 values): W4A4 with BF16 at its outputs."""
         (wg, sg), (wu, su), (wd, sd) = self.get(layer, expert)
@@ -360,7 +371,8 @@ class Reference:
         return self.round(gated + silu(conv)), rows
 
     # -- full forward
-    def forward(self, ids: list[int], *, layers: int | None = None, log=print) -> dict:
+    def forward(self, ids: list[int], *, layers: int | None = None, log=print,
+                record_taps: set[int] | None = None) -> dict:
         c, w = self.c, self.w
         T = len(ids)
         positions = torch.arange(T)
@@ -368,7 +380,8 @@ class Reference:
         x = torch.stack([w.store.read_flat(name, i * self.H, (i + 1) * self.H) for i in ids]).to(F64)
         R = x.repeat(1, self.hc)
         count = c["num_hidden_layers"] if layers is None else layers
-        record = {"layer_residual_rms": [], "layer_residuals": [], "routed": [], "ngram_rows": None}
+        record = {"layer_residual_rms": [], "layer_residuals": [], "routed": [], "ngram_rows": None,
+                  "moe_input": {}, "expert0_intermediate": {}}
         start = time.time()
         for layer in range(count):
             if layer + 1 in self.ple_layers:
@@ -382,6 +395,14 @@ class Reference:
                 y = self.qsa(layer, xa, positions)
             R = self.inject(R, y, inj)
             xm, inj = self.hc_mix(f"layers.{layer}.mlp_hyper_connection.", R)
+            if record_taps and layer in record_taps:
+                # Prototype activation tap: the MoE input x (K = H) that the routed gate/up and the
+                # shared gate projection receive, and expert 0's BF16 intermediate h = silu(g) * u
+                # (K = I) that the down projection receives.
+                record["moe_input"][layer] = xm.to(torch.float32).numpy()
+                record["expert0_intermediate"][layer] = (
+                    self.experts.intermediate(layer, 0, bf16(xm)).to(torch.float32).numpy()
+                )
             y, idx = self.moe(layer, xm)
             R = self.inject(R, y, inj)
             record["layer_residual_rms"].append(float(R.pow(2).mean().sqrt()))
@@ -411,13 +432,19 @@ def main() -> int:
     parser.add_argument("--no-bf16-boundaries", action="store_true")
     parser.add_argument("--threads", type=int, default=0)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--record-taps", default="", help="comma-separated layers whose MoE input and expert-0 intermediate to record")
     args = parser.parse_args()
     if args.threads:
         torch.set_num_threads(args.threads)
     ids = [int(v) for v in args.tokens.split(",") if v]
+    tap_layers = {int(v) for v in args.record_taps.split(",") if v} or None
     ref = Reference(args.model, bf16_boundaries=not args.no_bf16_boundaries)
-    record = ref.forward(ids, layers=args.layers)
+    record = ref.forward(ids, layers=args.layers, record_taps=tap_layers)
     arrays = {"tokens": np.array(ids, dtype=np.int64), "final_residual": record["final_residual"]}
+    for layer, values in record["moe_input"].items():
+        arrays[f"moe_input_{layer}"] = values
+    for layer, values in record["expert0_intermediate"].items():
+        arrays[f"expert0_intermediate_{layer}"] = values
     if "logits" in record:
         arrays["logits"] = record["logits"]
         top = np.argsort(-record["logits"], axis=-1)[:, :5]
