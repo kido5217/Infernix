@@ -1,2 +1,6 @@
 manifest manifest-eager-16k.txt sha256=ea284e3e3b6bdd65836541f8af40720f98acd4f2f635ca2fd7da755bd7e49c6f entries=4200
 manifest manifest-eager-140k.txt sha256=30f6426de1cf08bf297ef50519986717983c3e2e39da3eb3486b708d271f53b4 entries=3640
+
+--- selection-file verification (re-hash vs manifest) ---
+16k-eager: selections files=2700 matched=2700 mismatched=0 missing=0 combined_sha256=7c4827a91314c9c8b2d7b1144821f47bca944b8e32e457bc97f86508c69f3287
+140k-eager: selections files=2340 matched=2340 mismatched=0 missing=0 combined_sha256=42cd645241ae086ea5489d4913f0d3494f7ff6cb86bbe3d14ab59baf74725854

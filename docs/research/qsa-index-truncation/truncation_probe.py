@@ -273,14 +273,21 @@ def _write_dev_and_hashes(out):
 
 def _write_input_hashes(out):
     import hashlib
+    path = os.path.join(out, "input_hashes.txt")
+    preserved = ""
+    if os.path.exists(path):
+        txt = open(path).read()
+        marker = "\n--- selection-file verification"
+        if marker in txt:
+            preserved = txt[txt.index(marker):]
     lines = []
     for name in ("manifest-eager-16k.txt", "manifest-eager-140k.txt"):
         p = os.path.join(_HERE, name)
         h = hashlib.sha256(open(p, "rb").read()).hexdigest()
         n = sum(1 for _ in open(p))
         lines.append(f"manifest {name} sha256={h} entries={n}")
-    with open(os.path.join(out, "input_hashes.txt"), "w") as f:
-        f.write("\n".join(lines) + "\n")
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n" + preserved)
 
 
 def _verify_inputs(args):
