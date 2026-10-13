@@ -16,7 +16,7 @@ are used here without re-derivation:
   (`docs/maintainer/tensor-formats.md:34,231-271`).
 - The tensor record has **no spare field** and rejects extra keys
   (`tools/artifact/schema.py:193-217`, `:54-59`); the numeric-format registry is **closed**
-  (`tools/convert/quantization/formats.py:83-91`); the `uses` record carries only a scalar
+  (`tools/artifact/formats.py:83`); the `uses` record carries only a scalar
   `activation_input_divisor` (`tools/artifact/schema.py:370-375`, `recipe.py:478-499`).
 - Kernels issue exactly `mma.sync.aligned.kind::mxf4nvf4.block_scale.scale_vec::4X.m16n8k64...`
   with 16/64/128 geometry asserts (`src/ops/common/mma.cuh:136`,
@@ -30,7 +30,7 @@ are used here without re-derivation:
 | Method | What changes | Where it lives | Tier | Calibration at conversion | Reported setting / metric |
 |---|---|---|---|---|---|
 | **OSFP4** | A block-diagonal **diagonal smoothing matrix `A`** (one factor per input channel, grouped in 16s) applied as `W A⁻¹` and `A X`; plus joint optimization of the existing **per-16 E4M3 weight-block scales** (`Γ_W`) | `W A⁻¹` folds into the stored weights; `A X` is a per-input-channel multiply on the activation side, folded into the preceding norm where possible and applied by the runtime otherwise | **(ii)(c)** — per-channel activation transform. Its block-scale optimization alone is **(i)** method-only; no second per-16 scale, so not (iii) | Corpus + forward passes: 1024 FineWeb-Edu sequences of 2048 tokens; `Σ_X = (1/k₁)Σ x_j x_jᵀ`, and for W4A4 a `k`-row activation subset (`X`) | NVFP4 **W4A4** (and W4A16), Llama-3.1-8B-Instruct: mean accuracy **77.03 %** (W-SIC/X-RTN, absmax act scaling) vs BF16 **79.22 %** and FP-Quant GPTQ **76.34 %**; WikiText-2 PPL **7.88 → 7.67**. Maps onto the repo's A4 recipe (4-bit W+A, NV per-16 E4M3 block scale, FP32 tensor scale) |
-| **DualQuant** | A **row scale `α`** (per output channel) and a **column scale `β`** (per input channel) around the format's own block quantizer: `W ≈ Diag(α)⁻¹ Q(Diag(α) W Diag(β)) Diag(β)⁻¹` | `α` is absorbed into the stored weight's dequant scale; `X·Diag(β)⁻¹` is a **per-channel activation pre-scale applied inside the quantization kernel** | **(ii)(c)** — per-channel activation transform. `α` folds into the existing per-16 weight scale (method-only); no second per-16 scale, so not (iii) | **None** — calibration-free; uses only the static weight matrix (no activation data, no statistics, no forward pass) | INT4(G=64)/MXINT4/MXFP4(G=32)/NVFP4(**G=16**) W4A4. Llama-3.1-8B NVFP4 WikiText-2 PPL **6.83** vs RTN 9.04 and SmoothQuant 7.32; downstream MMLU 57.76, HellaSwag 56.65, PIQA 78.24, ARC-Easy 77.90, WinoGrande 71.67. NVFP4 numbers are **fake-quant**; the real packed kernel is INT4(G=64), a format the repo does not run |
+| **DualQuant** | A **row scale `α`** (per output channel) and a **column scale `β`** (per input channel) around the format's own block quantizer: `W ≈ Diag(α)⁻¹ Q(Diag(α) W Diag(β)) Diag(β)⁻¹` | `α` is absorbed into the stored weight's dequant scale; `X·Diag(β)⁻¹` is a **per-channel activation pre-scale applied inside the quantization kernel** | **(ii)(c)** — per-channel activation transform. `α` folds into the existing per-16 weight scale (method-only); no second per-16 scale, so not (iii) | **None** — calibration-free; uses only the static weight matrix (no activation data, no statistics, no forward pass) | INT4(G=64)/MXINT4/MXFP4(G=32)/NVFP4(**G=16**) W4A4. Llama-3.1-8B NVFP4 WikiText-2 PPL **6.83** vs RTN 9.04 and SmoothQuant 7.32; downstream MMLU 57.76, HellaSwag 56.65, PIQA 78.24, ARC-Easy 77.90, WinoGrande 71.67. NVFP4 numbers are **fake-quant**; its only real packed W4A4 deployment is **INT4 G=64** on an RTX 4090 (Sec. 5.2). The repo does carry an INT4 G=64 **weight** format (`q4_g64_fp16`, `tools/artifact/formats.py:67`) but runs it with A16 activations: its only low-precision activation route is NVFP4 (`include/infernix/ops/linear.h:100-106`) |
 
 **Decisive constraint for both:** the method needs a **per-channel multiply on the activation side**,
 which this repo does not support — it has only the scalar `activation_input_divisor`. Neither method
@@ -43,7 +43,7 @@ so neither is (iii).
 
 A diagonal smoothing matrix `A ∈ R^{n×n}`, block-diagonal with 16×16 blocks
 `A_ℓ = diag(α_ℓ^{(1)}, …, α_ℓ^{(16)})`, so there is one factor `α_ℓ^{(r)}` per **input channel**
-`t = 16(ℓ−1)+r` (Sec. 1; App. D, "Detailed Loss Derivations"). The matrices actually quantized are
+`t = 16(ℓ−1)+r` (Sec. 2.2; App. I, "Detailed Loss Derivations and SIC Procedure"). The matrices actually quantized are
 
 > Eq (6): `W'_ℓ = diag(Γ_{W_ℓ})⁻¹ W_ℓ A_ℓ⁻¹`,  `X'_ℓ = A_ℓ X_ℓ diag(Γ_{X_ℓ})⁻¹`,
 
@@ -52,8 +52,8 @@ with the first-order MatMul error
 > Eq (7): `e = Ŵ X̂ − W X = e_W A X + W A⁻¹ e_X + e_W e_X ≈ e_W A X + W A⁻¹ e_X`.
 
 The paper is explicit that this is a SmoothQuant-style pair: "we actually quantize `W A⁻¹` and
-(possibly) `A X`" (App. D). `Γ_W` is the existing single E4M3 scale per 16-element group per row
-(`Γ_{W_ℓ} ∈ C_scale^m`, App. D), and `Γ_X` the activation side's; there is **no second scale per
+(possibly) `A X`" (App. I). `Γ_W` is the existing single E4M3 scale per 16-element group per row
+(`Γ_{W_ℓ} ∈ C_scale^m`, App. I), and `Γ_X` the activation side's; there is **no second scale per
 group**. The optimization uses the dithered quantizer of Eq (3) and the loss `φ` of Eq (4), with the
 RTN/SIC losses Eq (11)/(12), Eq (16), Eq (21) and the four total losses Eq (22)–(25).
 
@@ -61,15 +61,15 @@ RTN/SIC losses Eq (11)/(12), Eq (16), Eq (21) and the four total losses Eq (22)�
 
 - **Weight side is foldable.** `W A⁻¹` is quantized with the existing per-16 E4M3 scales and stored;
   no new weight geometry. The paper even sets the saved FP32 global weight scale to one and puts the
-  compensating factor "already incorporated into `A`" (App. A, "FP32 tensor scales"). The remaining
+  compensating factor "already incorporated into `A`" (App. B, "FP32 tensor scales"). The remaining
   weight component — optimized E4M3 block scales `Γ_W` and the fine E4M3 search — is a pure
   selection change at the existing 16/64 geometry.
 - **Activation side is per-channel and needs the runtime.** `A X` multiplies the input channels of the
   activation. The paper folds it into a preceding normalization layer "where possible" and applies it
-  explicitly "before the attention output and MLP down projections otherwise" (App. C,
+  explicitly "before the attention output and MLP down projections otherwise" (App. D.2,
   "OSFP4 and activation-scale ablations"); "the smoothing transformation `A` is applied at runtime
-  only on `o_proj` and `down_proj`" (App. E). `A` is rounded to the weight dtype when folded into a
-  norm, or to BF16 when "explicit runtime smoothing is required" (App. A).
+  only on `o_proj` and `down_proj`" (App. G, "Inference Efficiency"). `A` is rounded to the weight dtype when folded into a
+  norm, or to BF16 when "explicit runtime smoothing is required" (App. B).
 - The released code confirms the mechanism and its shape: `deploy_mapping_smooth_quant_scale` either
   divides the balance layers' weight columns `weight[:, :input_width] /= scale.view(1, -1)` and
   multiplies the preceding layer (`_deploy_smooth_layer_smoothing`), or, when there is no preceding
@@ -91,8 +91,8 @@ a weight-block-scale selection at the existing geometry — that part alone woul
 
 Corpus + forward passes. All four configurations first collect `k₁` activation vectors and form
 `Σ_X = (1/k₁)Σ x_j x_jᵀ`; W4A4 additionally keeps a random subset of `k ≤ k₁` full activation vectors
-as `X`. The released modifier sets `requires_calibration_data = True` and uses 1024 FineWeb-Edu
-sequences of 2048 tokens (`base.py`; App. C). It is **not** calibration-free.
+as the `n×k` matrix `X` (k activation vectors, i.e. k columns). The released modifier sets `requires_calibration_data = True` and uses 1024 FineWeb-Edu
+sequences of 2048 tokens (`base.py`; App. D.1). It is **not** calibration-free.
 
 ## 3. DualQuant (arXiv 2610.13767)
 
@@ -153,12 +153,13 @@ This repo's A4 recipe is 4-bit weights **and** activations in NVFP4 (G=16, per-1
 per-matrix FP32 `d_w`, scalar `activation_input_divisor`).
 
 - **OSFP4**: format-for-format, yes — E2M1 with one E4M3 scale per 16 input channels and an FP32
-  tensor scale (App. C), evaluated natively through vLLM on an RTX 5090 / B200 (Sec. 4). The
+  tensor scale (App. B), evaluated natively through vLLM on an RTX 5090 / B200 (Sec. 4). The
   mismatch is exclusively the missing per-channel activation transform.
 - **DualQuant**: the **format** for its NVFP4 row matches (G=16, UE4M3 scale, 4-bit W+A), but its
   NVFP4 results are **fake quantization** on GH200 with weights dequantized to FP16/BF16 at inference
-  (Sec. 6.1). Its only real packed deployment is **INT4 with G=64** on an RTX 4090 (Sec. 6.2,
-  App. "Real packed W4A4") — a format the repo does not run. The metric that maps onto the A4 recipe
+  (Sec. 5, evaluation setup). Its only real packed deployment is **INT4 with G=64** on an RTX 4090
+  (Sec. 5.2, "Real packed W4A4 deployment") — a **W4A4** route the repo does not run (it carries
+  `q4_g64_fp16` weights but only A16 activations). The metric that maps onto the A4 recipe
   is therefore the NVFP4 fake-quant perplexity/accuracy, not the deployed number.
 
 ## 5. Equations relied on
@@ -169,7 +170,7 @@ OSFP4 (arXiv 2610.08231):
 - **Eq (7)** `e ≈ e_W A X + W A⁻¹ e_X`.
 - Eq (11)/(12) `L^RTN_W`, Eq (16) `L^RTN_X`, Eq (21) `L^SIC_W`; Eq (22)–(25) the four total losses
   (`W-RTN`, `W-SIC`, `W-RTN/X-RTN`, `W-SIC/X-RTN`).
-- App. A: `a_{ℓr}=log α_ℓ^{(r)}`, `b_{ℓi}=log γ_{W_ℓ}^{(i)}`, `c_{ℓj}=log γ_{X_ℓ}^{(j)}`; the
+- App. B: `a_{ℓr}=log α_ℓ^{(r)}`, `b_{ℓi}=log γ_{W_ℓ}^{(i)}`, `c_{ℓj}=log γ_{X_ℓ}^{(j)}`; the
   canonicalization and activation global scale `g_X = 448·6 / M_X`.
 
 DualQuant (arXiv 2610.13767):
