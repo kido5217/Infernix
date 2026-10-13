@@ -1,3 +1,3 @@
-[140k-eager] checked 226 captures (columns <= 8)
-[16k-eager] checked 218 captures (columns <= 8)
-EQUIVALENCE: 444/444 captures identical on the order-independent counts and within bounds; summation-order near-tie differences (exact split) = 1
+[140k-eager] checked 224 captures (columns <= 8)
+[16k-eager] checked 216 captures (columns <= 8)
+EQUIVALENCE: 440/440 captures identical on the order-independent counts and within bounds; summation-order near-tie differences (exact split) = 0

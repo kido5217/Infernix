@@ -48,97 +48,25 @@
     "verdict": "explained"
   },
   {
-    "capture": "140k-eager/selections/step_02/s_006",
-    "col": 850,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      3462,
-      34699
-    ],
-    "error": 4.76837158203125e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_006",
-    "col": 856,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      29117,
-      29777
-    ],
-    "error": 4.76837158203125e-06,
-    "verdict": "explained"
-  },
-  {
     "capture": "140k-eager/selections/step_02/s_010",
-    "col": 1809,
+    "col": 3231,
     "gap": 0.0,
     "col_err": null,
     "symmetric_difference": [
-      26752,
-      31177
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_011",
-    "col": 1187,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      16825,
-      20911
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_011",
-    "col": 1811,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      30968,
-      34177
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_011",
-    "col": 3863,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      32747,
-      34426
+      22782,
+      30191
     ],
     "error": 3.814697265625e-06,
     "verdict": "explained"
   },
   {
     "capture": "140k-eager/selections/step_02/s_014",
-    "col": 123,
+    "col": 3427,
     "gap": 0.0,
     "col_err": null,
     "symmetric_difference": [
-      3499,
-      14480
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_015",
-    "col": 1090,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      31443,
-      34977
+      29059,
+      34534
     ],
     "error": 3.814697265625e-06,
     "verdict": "explained"
@@ -151,18 +79,6 @@
     "symmetric_difference": [
       20739,
       25812
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_017",
-    "col": 1496,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      23326,
-      26099
     ],
     "error": 3.814697265625e-06,
     "verdict": "explained"
@@ -187,30 +103,6 @@
     "symmetric_difference": [
       20540,
       23076
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_017",
-    "col": 2853,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      30490,
-      33797
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_019",
-    "col": 470,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      22151,
-      24381
     ],
     "error": 3.814697265625e-06,
     "verdict": "explained"
@@ -253,6 +145,18 @@
   },
   {
     "capture": "140k-eager/selections/step_02/s_020",
+    "col": 20,
+    "gap": 0.0,
+    "col_err": null,
+    "symmetric_difference": [
+      28207,
+      28645
+    ],
+    "error": 3.814697265625e-06,
+    "verdict": "explained"
+  },
+  {
+    "capture": "140k-eager/selections/step_02/s_020",
     "col": 830,
     "gap": 9.5367431640625e-07,
     "col_err": null,
@@ -265,12 +169,12 @@
   },
   {
     "capture": "140k-eager/selections/step_02/s_020",
-    "col": 3143,
+    "col": 2463,
     "gap": 0.0,
     "col_err": null,
     "symmetric_difference": [
-      22559,
-      30142
+      26337,
+      28833
     ],
     "error": 3.814697265625e-06,
     "verdict": "explained"
@@ -319,18 +223,6 @@
     "symmetric_difference": [
       30881,
       33879
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_023",
-    "col": 3016,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      30166,
-      33369
     ],
     "error": 3.814697265625e-06,
     "verdict": "explained"
@@ -408,42 +300,6 @@
     "verdict": "explained"
   },
   {
-    "capture": "140k-eager/selections/step_02/s_028",
-    "col": 2743,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      22541,
-      30059
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_030",
-    "col": 48,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      26835,
-      28367
-    ],
-    "error": 2.86102294921875e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_030",
-    "col": 431,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      16671,
-      21528
-    ],
-    "error": 2.86102294921875e-06,
-    "verdict": "explained"
-  },
-  {
     "capture": "140k-eager/selections/step_02/s_030",
     "col": 2200,
     "gap": 4.76837158203125e-07,
@@ -453,30 +309,6 @@
       34274
     ],
     "error": 2.86102294921875e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_032",
-    "col": 2450,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      4768,
-      32542
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "140k-eager/selections/step_02/s_035",
-    "col": 2096,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      12817,
-      13255
-    ],
-    "error": 3.814697265625e-06,
     "verdict": "explained"
   },
   {

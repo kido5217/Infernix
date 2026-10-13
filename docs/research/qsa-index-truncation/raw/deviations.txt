@@ -16,8 +16,15 @@ D4  A2 truncates each BF16 word's leading m bits, zeroes the rest, and reads the
     with no rounding; A2(16) equals A0 by construction.
 D5  A3 V1 (paper's rule, gating).  Per capture (one layer call) Var(k_j) is the variance of channel
     j over that capture's stored block keys; g_j = sum_h (q_j^(h))^2 Var(k_j).  A depth vector
-    t in [0,4]^128 per column is produced by bisecting the water line theta so that sum_j t_j <= B
-    (30 bisections on log theta over [log 0.001, log 10], the paper's bracket).
+    t in [0,4]^128 per column is produced by bisecting the water line theta so that sum_j t_j <= B.
+    The search bisects log2 theta over [-40, 40] (theta in [9.09e-13, 1.10e12]) for 80 steps.  A4's
+    mean bits/block = 128*(t*+1) = 640 is the maximum the depth rule can return (all 128 channels at
+    depth 4), so this budget is slack: even the bracket floor already fits it, no crossing exists in
+    the bracket, and the bisection walks to its floor.  The reported theta = 2^-40 is therefore a
+    floor artifact of an inactive constraint, and A3's depth rule is degenerate here (every channel
+    takes depth 4), not calibrated.  solve_theta detects the inactive constraint
+    (constraint_active = false in a3_budgets_*.json) and returns the floor instead of bisecting; the
+    depth rule still degenerates to every-channel depth 4, so A3 = A1(4) = A4 by construction.
 D6  A3 V2 (per-block variant, reported, non-gating).  a_{beta,j}^2 replaces Var(k_j); because a is
     constant over the 16 blocks of a group it is constant per (group, channel), so the depth vector
     is per (group, column) and each block reads its group's depth.

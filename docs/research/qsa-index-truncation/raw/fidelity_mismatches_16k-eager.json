@@ -1,5 +1,17 @@
 [
   {
+    "capture": "16k-eager/selections/step_02/s_029",
+    "col": 2175,
+    "gap": 0.0,
+    "col_err": null,
+    "symmetric_difference": [
+      1390,
+      1867
+    ],
+    "error": 3.814697265625e-06,
+    "verdict": "explained"
+  },
+  {
     "capture": "16k-eager/selections/step_02/s_031",
     "col": 981,
     "gap": 0.0,
@@ -7,6 +19,18 @@
     "symmetric_difference": [
       931,
       1097
+    ],
+    "error": 3.814697265625e-06,
+    "verdict": "explained"
+  },
+  {
+    "capture": "16k-eager/selections/step_02/s_031",
+    "col": 1805,
+    "gap": 0.0,
+    "col_err": null,
+    "symmetric_difference": [
+      93,
+      2601
     ],
     "error": 3.814697265625e-06,
     "verdict": "explained"
@@ -24,25 +48,49 @@
     "verdict": "explained"
   },
   {
-    "capture": "16k-eager/selections/step_02/s_035",
-    "col": 1865,
+    "capture": "16k-eager/selections/step_02/s_034",
+    "col": 686,
     "gap": 0.0,
     "col_err": null,
     "symmetric_difference": [
-      2460,
-      2461
+      267,
+      395
     ],
     "error": 3.814697265625e-06,
     "verdict": "explained"
   },
   {
-    "capture": "16k-eager/selections/step_02/s_039",
-    "col": 2571,
+    "capture": "16k-eager/selections/step_02/s_045",
+    "col": 3678,
     "gap": 0.0,
     "col_err": null,
     "symmetric_difference": [
-      110,
-      548
+      871,
+      882
+    ],
+    "error": 3.814697265625e-06,
+    "verdict": "explained"
+  },
+  {
+    "capture": "16k-eager/selections/step_02/s_047",
+    "col": 180,
+    "gap": 0.0,
+    "col_err": null,
+    "symmetric_difference": [
+      999,
+      1348
+    ],
+    "error": 2.86102294921875e-06,
+    "verdict": "explained"
+  },
+  {
+    "capture": "16k-eager/selections/step_02/s_047",
+    "col": 359,
+    "gap": 0.0,
+    "col_err": null,
+    "symmetric_difference": [
+      1012,
+      1436
     ],
     "error": 2.86102294921875e-06,
     "verdict": "explained"
@@ -60,25 +108,13 @@
     "verdict": "explained"
   },
   {
-    "capture": "16k-eager/selections/step_02/s_052",
-    "col": 3932,
+    "capture": "16k-eager/selections/step_02/s_059",
+    "col": 2490,
     "gap": 0.0,
     "col_err": null,
     "symmetric_difference": [
-      757,
-      1283
-    ],
-    "error": 2.86102294921875e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "16k-eager/selections/step_02/s_053",
-    "col": 1211,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      1569,
-      2289
+      1533,
+      2658
     ],
     "error": 3.814697265625e-06,
     "verdict": "explained"
@@ -121,6 +157,18 @@
   },
   {
     "capture": "16k-eager/selections/step_02/s_062",
+    "col": 352,
+    "gap": 0.0,
+    "col_err": null,
+    "symmetric_difference": [
+      1293,
+      3972
+    ],
+    "error": 2.384185791015625e-06,
+    "verdict": "explained"
+  },
+  {
+    "capture": "16k-eager/selections/step_02/s_062",
     "col": 476,
     "gap": 0.0,
     "col_err": null,
@@ -141,30 +189,6 @@
       1046
     ],
     "error": 2.86102294921875e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "16k-eager/selections/step_02/s_066",
-    "col": 24,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      130,
-      2504
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "16k-eager/selections/step_02/s_066",
-    "col": 499,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      938,
-      1620
-    ],
-    "error": 3.814697265625e-06,
     "verdict": "explained"
   },
   {
@@ -216,61 +240,13 @@
     "verdict": "explained"
   },
   {
-    "capture": "16k-eager/selections/step_02/s_073",
-    "col": 2197,
+    "capture": "16k-eager/selections/step_02/s_079",
+    "col": 628,
     "gap": 0.0,
     "col_err": null,
     "symmetric_difference": [
-      1881,
-      2330
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "16k-eager/selections/step_02/s_078",
-    "col": 1229,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      1299,
-      1733
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "16k-eager/selections/step_02/s_078",
-    "col": 1611,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      325,
-      484
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "16k-eager/selections/step_02/s_078",
-    "col": 2763,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      24,
-      3226
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "16k-eager/selections/step_02/s_078",
-    "col": 2878,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      2647,
-      2827
+      702,
+      1115
     ],
     "error": 3.814697265625e-06,
     "verdict": "explained"
@@ -288,18 +264,6 @@
     "verdict": "explained"
   },
   {
-    "capture": "16k-eager/selections/step_02/s_079",
-    "col": 3939,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      1704,
-      4019
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
     "capture": "16k-eager/selections/step_02/s_080",
     "col": 1475,
     "gap": 9.5367431640625e-07,
@@ -312,18 +276,6 @@
     "verdict": "explained"
   },
   {
-    "capture": "16k-eager/selections/step_02/s_084",
-    "col": 2877,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      106,
-      1427
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
     "capture": "16k-eager/selections/step_02/s_085",
     "col": 3429,
     "gap": 0.0,
@@ -331,18 +283,6 @@
     "symmetric_difference": [
       2492,
       4641
-    ],
-    "error": 3.814697265625e-06,
-    "verdict": "explained"
-  },
-  {
-    "capture": "16k-eager/selections/step_02/s_086",
-    "col": 108,
-    "gap": 0.0,
-    "col_err": null,
-    "symmetric_difference": [
-      76,
-      1338
     ],
     "error": 3.814697265625e-06,
     "verdict": "explained"
@@ -408,15 +348,15 @@
     "verdict": "explained"
   },
   {
-    "capture": "16k-eager/selections/step_02/s_097",
-    "col": 2867,
+    "capture": "16k-eager/selections/step_02/s_098",
+    "col": 574,
     "gap": 0.0,
     "col_err": null,
     "symmetric_difference": [
-      4632,
-      4775
+      579,
+      4947
     ],
-    "error": 4.76837158203125e-06,
+    "error": 2.86102294921875e-06,
     "verdict": "explained"
   }
 ]

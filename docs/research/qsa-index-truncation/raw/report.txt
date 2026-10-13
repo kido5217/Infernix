@@ -14,9 +14,11 @@ A2_16     1.0000   1.0000   0.0000  256.00   1.00x
 A3_V1     0.9536   0.9209   0.0427   80.00   3.20x
 A3_V2     0.9536   0.9209   0.0427   80.00   3.20x
 BAR A1(4): mean 0.9536 PASS | worst 0.9209 PASS | spread 0.0427 PASS | curve reported PASS | 80 vs 256 = 3.2x
+A2_12: mean 0.9791 worst 0.9644 spread 0.0192 meets all three numeric conditions but cannot gate (section 4); 192 B/block vs A1(4) 80 B
+A2_16: mean 1.0000 worst 1.0000 spread 0.0000 meets all three numeric conditions but cannot gate (section 4); 256 B/block vs A1(4) 80 B
 A1(4) weighting robustness: column-weighted 0.9536 | layer-averaged 0.9511 | step-averaged 0.9458
-A3 A3_V1: mean 0.9536 vs A1_4 0.9536 (delta +0.0000); bits 640.0 vs 640.0 (equal); gate FAIL
-A3 A3_V2: mean 0.9536 vs A1_4 0.9536 (delta +0.0000); bits 640.0 vs 640.0 (equal); gate FAIL
+A3 A3_V1: mean 0.9536 vs A1_4 0.9536 (delta +0.0000); bits 640.0 vs 640.0 (equal); gate FAIL [budget slack: floor theta, constraint inactive, depth rule degenerate]
+A3 A3_V2: mean 0.9536 vs A1_4 0.9536 (delta +0.0000); bits 640.0 vs 640.0 (equal); gate FAIL [budget slack: floor theta, constraint inactive, depth rule degenerate]
 
 ================ 140k-eager ================
 arm         mean    worst   spread   B/blk   reduc
@@ -33,6 +35,8 @@ A2_16     1.0000   1.0000   0.0000  256.00   1.00x
 A3_V1     0.9213   0.8951   0.0510   80.00   3.20x
 A3_V2     0.9213   0.8951   0.0510   80.00   3.20x
 BAR A1(4): mean 0.9213 FAIL | worst 0.8951 FAIL | spread 0.0510 PASS | curve reported PASS | 80 vs 256 = 3.2x
+A2_12: mean 0.9618 worst 0.9485 spread 0.0265 meets all three numeric conditions but cannot gate (section 4); 192 B/block vs A1(4) 80 B
+A2_16: mean 1.0000 worst 1.0000 spread 0.0000 meets all three numeric conditions but cannot gate (section 4); 256 B/block vs A1(4) 80 B
 A1(4) weighting robustness: column-weighted 0.9213 | layer-averaged 0.9193 | step-averaged 0.9296
-A3 A3_V1: mean 0.9213 vs A1_4 0.9213 (delta +0.0000); bits 640.0 vs 640.0 (equal); gate FAIL
-A3 A3_V2: mean 0.9213 vs A1_4 0.9213 (delta +0.0000); bits 640.0 vs 640.0 (equal); gate FAIL
+A3 A3_V1: mean 0.9213 vs A1_4 0.9213 (delta +0.0000); bits 640.0 vs 640.0 (equal); gate FAIL [budget slack: floor theta, constraint inactive, depth rule degenerate]
+A3 A3_V2: mean 0.9213 vs A1_4 0.9213 (delta +0.0000); bits 640.0 vs 640.0 (equal); gate FAIL [budget slack: floor theta, constraint inactive, depth rule degenerate]

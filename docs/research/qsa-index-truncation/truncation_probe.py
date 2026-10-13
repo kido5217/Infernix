@@ -80,8 +80,15 @@ D4  A2 truncates each BF16 word's leading m bits, zeroes the rest, and reads the
     with no rounding; A2(16) equals A0 by construction.
 D5  A3 V1 (paper's rule, gating).  Per capture (one layer call) Var(k_j) is the variance of channel
     j over that capture's stored block keys; g_j = sum_h (q_j^(h))^2 Var(k_j).  A depth vector
-    t in [0,4]^128 per column is produced by bisecting the water line theta so that sum_j t_j <= B
-    (30 bisections on log theta over [log 0.001, log 10], the paper's bracket).
+    t in [0,4]^128 per column is produced by bisecting the water line theta so that sum_j t_j <= B.
+    The search bisects log2 theta over [-40, 40] (theta in [9.09e-13, 1.10e12]) for 80 steps.  A4's
+    mean bits/block = 128*(t*+1) = 640 is the maximum the depth rule can return (all 128 channels at
+    depth 4), so this budget is slack: even the bracket floor already fits it, no crossing exists in
+    the bracket, and the bisection walks to its floor.  The reported theta = 2^-40 is therefore a
+    floor artifact of an inactive constraint, and A3's depth rule is degenerate here (every channel
+    takes depth 4), not calibrated.  solve_theta detects the inactive constraint
+    (constraint_active = false in a3_budgets_*.json) and returns the floor instead of bisecting; the
+    depth rule still degenerates to every-channel depth 4, so A3 = A1(4) = A4 by construction.
 D6  A3 V2 (per-block variant, reported, non-gating).  a_{beta,j}^2 replaces Var(k_j); because a is
     constant over the 16 blocks of a group it is constant per (group, channel), so the depth vector
     is per (group, column) and each block reads its group's depth.
@@ -225,14 +232,42 @@ def score_one(kq, q, col):
     return np.maximum(dots, 0.0).sum(axis=1) / float(np.sqrt(kq.shape[1]))
 
 
+def _topk_masked(Sm, k):
+    """Top-`k` row ids per column of the masked score matrix ``Sm``, in (-score, id) order.
+
+    Protocol section 7.10: tie at the boundary take the lower block id, the engine's rule.  The
+    result is exactly ``np.lexsort((np.arange(n), -Sm), axis=0)[:k]`` (the vendored verifier's
+    per-column rule), but it does not sort all ``n`` rows: ``argpartition`` yields the top-`k` and
+    only rows tied at the k-th score are re-selected by id.  Tested element-wise against the
+    lexsort form on random, all-equal, heavy-tie and masked inputs.
+    """
+    part = np.argpartition(-Sm, k - 1, axis=0)[:k]
+    ps = np.take_along_axis(Sm, part, axis=0)
+    thresh = ps.min(axis=0)
+    sel = np.empty_like(part)
+    for c in range(part.shape[1]):
+        above = ps[:, c] > thresh[c]
+        na = int(above.sum())
+        sel[:na, c] = part[above, c]
+        if na < k:
+            tie = np.nonzero(Sm[:, c] == thresh[c])[0]
+            sel[na:, c] = np.sort(tie)[:k - na]
+    ss = np.take_along_axis(Sm, sel, axis=0)
+    order = np.lexsort((sel, -ss), axis=0)
+    return np.take_along_axis(sel, order, axis=0)
+
+
 def ranked_top(S, n_per_col, top=TOP):
-    n, C = S.shape
+    n = S.shape[0]
     rows = np.arange(n)[:, None]
     Sm = np.where(rows < n_per_col[None, :], S, -np.inf)
-    part = np.argpartition(-Sm, top - 1, axis=0)[:top]
-    ps = np.take_along_axis(Sm, part, axis=0)
-    order = np.argsort(-ps, axis=0, kind="stable")
-    return np.take_along_axis(part, order, axis=0), Sm
+    return _topk_masked(Sm, top), Sm
+
+
+def top_ids_1d(score, k):
+    """Top-k ids of a single column, ties to the lower block id (same rule as ranked_top)."""
+    ids = np.arange(score.size)
+    return np.lexsort((ids, -score))[:k]
 
 
 def rows_intersect(a_ids, b_ids):
@@ -244,12 +279,10 @@ def rows_intersect(a_ids, b_ids):
 
 
 def a0_top64(a_score, n_per_col):
-    rows = np.arange(a_score.shape[0])[:, None]
+    n = a_score.shape[0]
+    rows = np.arange(n)[:, None]
     Sm = np.where(rows < n_per_col[None, :], a_score, -np.inf)
-    part = np.argpartition(-Sm, 63, axis=0)[:64]
-    ps = np.take_along_axis(Sm, part, axis=0)
-    order = np.argsort(-ps, axis=0, kind="stable")
-    return np.take_along_axis(part, order, axis=0)
+    return _topk_masked(Sm, 64)
 
 
 # ------------------------------------------------------------------------------------------------
@@ -294,8 +327,8 @@ def _verify_inputs(args):
     """Re-hash every primary-run selection file and check it against the vendored manifest (D15)."""
     import hashlib
     os.makedirs(args.out, exist_ok=True)
-    _write_dev_and_hashes(args.out)
     lines = []
+    _write_dev_and_hashes(args.out)
     for ctx, manifest in (("16k-eager", "manifest-eager-16k.txt"),
                           ("140k-eager", "manifest-eager-140k.txt")):
         root = os.path.join(CAPTURE_ROOT, ctx)
@@ -320,8 +353,15 @@ def _verify_inputs(args):
         lines.append(f"{ctx}: selections files={len(entries)} matched={good} mismatched={bad} "
                      f"missing={missing} combined_sha256={comb.hexdigest()}")
         print(lines[-1], flush=True)
-    with open(os.path.join(args.out, "input_hashes.txt"), "a") as f:
-        f.write("\n--- selection-file verification (re-hash vs manifest) ---\n")
+    # Replace any existing verification block with the freshly computed one, so re-running the
+    # documented command is idempotent (the other stages preserve the block via _write_input_hashes).
+    path = os.path.join(args.out, "input_hashes.txt")
+    txt = open(path).read()
+    marker = "\n--- selection-file verification"
+    head = txt[:txt.index(marker)] if marker in txt else txt
+    with open(path, "w") as f:
+        f.write(head.rstrip("\n") + "\n\n"
+                "--- selection-file verification (re-hash vs manifest) ---\n")
         f.write("\n".join(lines) + "\n")
 
 
@@ -580,14 +620,24 @@ def hist_mean_bits(centers, h, lth):
 
 
 def solve_theta(centers, h, target_bits):
+    """Water line: the smallest log2-theta whose mean bits fit ``target_bits``.
+
+    Returns ``(theta, active)``.  The search bisects log2 theta over the bracket ``[-40, 40]``
+    (theta in [9.09e-13, 1.10e12]).  ``active`` is False when even the bracket floor already fits
+    the budget (mean bits are monotone decreasing in log2 theta, so the maximum is at the floor):
+    no crossing exists inside the bracket, the budget is slack, and the floor is returned rather
+    than bisecting to it.  This is the case for A4's 640 bits, the depth rule's own maximum.
+    """
     lo, hi = -40.0, 40.0
+    if hist_mean_bits(centers, h, lo) <= target_bits:
+        return 2.0 ** lo, False
     for _ in range(80):
         m = 0.5 * (lo + hi)
         if hist_mean_bits(centers, h, m) > target_bits:
             lo = m
         else:
             hi = m
-    return 2.0 ** (0.5 * (lo + hi))
+    return 2.0 ** (0.5 * (lo + hi)), True
 
 
 def a4_from_fixed(out, ctx):
@@ -632,11 +682,12 @@ def _run_a3(args):
         probes = {}
         for arm in A3_ARMS:
             centers, h, _ = build_bit_hist(root, arm, sample=64)
-            theta = solve_theta(centers, h, target_bits)
-            probes[arm] = {"theta": theta,
+            theta, active = solve_theta(centers, h, target_bits)
+            probes[arm] = {"theta": theta, "constraint_active": active,
                            "probe_bits": hist_mean_bits(centers, h, np.log2(theta))}
-            print(f"[{ctx}] {arm} theta={theta:.6g} probe_bits={probes[arm]['probe_bits']:.2f}",
-                  flush=True)
+            note = "" if active else "  (budget slack: floor theta, constraint inactive)"
+            print(f"[{ctx}] {arm} theta={theta:.6g} probe_bits={probes[arm]['probe_bits']:.2f}"
+                  f"{note}", flush=True)
         percol = {a: {"inter": [], "rank": []} for a in A3_ARMS}
         se = {a: [] for a in A3_ARMS}
         colmeta = {"col": [], "layer": [], "step": [], "n": [], "scored": []}
@@ -719,7 +770,7 @@ def _run_a3(args):
                         else:
                             kq = np.take_along_axis(Rstack[:, :n, :], t[None], axis=0)[0]
                             S = score_one(kq, cap.q, col)
-                        ranked = np.argsort(-S, kind="stable")[:TOP]
+                        ranked = top_ids_1d(S, TOP)
                         eng = cap.engine_ids[:, col]
                         inter = np.intersect1d(ranked, eng, assume_unique=False).size
                         if cap.col_scored(col):
@@ -727,10 +778,10 @@ def _run_a3(args):
                             diff = np.abs(S - theirs)
                             scale = max(float(theirs.max() - theirs.min()), 1e-30)
                             sen = float(diff.sum()) / (n * scale)
-                            a0rank = np.argsort(-theirs, kind="stable")[:64]
+                            a0rank = top_ids_1d(theirs, 64)
                         else:
                             S0 = score_one(cap.keys_f32[:n], cap.q, col)
-                            a0rank = np.argsort(-S0, kind="stable")[:64]
+                            a0rank = top_ids_1d(S0, 64)
                             sen = None
                         rank_inter = np.intersect1d(ranked[:64], a0rank, assume_unique=False).size
                     if sen is not None:
@@ -765,10 +816,11 @@ def _run_a3(args):
         with open(os.path.join(args.out, f"a3_budgets_{ctx}.json"), "w") as f:
             json.dump({"A4": f"A1_{t_star}", "target_bits": target_bits, "a1_curve": a1curve,
                        "probes": {a: {"theta": probes[a]["theta"],
+                                      "constraint_active": probes[a]["constraint_active"],
                                       "probe_bits": probes[a]["probe_bits"],
                                       "realized_mean_bits": bits[a]["sum_bits"] / bits[a]["blocks"],
                                       "realized_maxB": bits[a]["maxB"]}
-                                  for a in A3_ARMS}}, f, indent=2)
+                                   for a in A3_ARMS}}, f, indent=2)
         print(f"[{ctx}] a3 done {time.time()-t0:.0f}s", flush=True)
 
 
@@ -841,6 +893,18 @@ def _report(args):
                              f"worst {worst:.4f} {'PASS' if c2 else 'FAIL'} | "
                              f"spread {spread:.4f} {'PASS' if c3 else 'FAIL'} | "
                              f"curve reported PASS | 80 vs 256 = 3.2x")
+                # Section 4: A2 and every t<4 arm are reported and cannot gate, even when their
+                # three numeric conditions pass (A2(12) at 140K does; it is not the cheaper arm).
+                for arm in A2_ARMS:
+                    st2, m2 = _arm_layer_stats(per_layer, arm)
+                    if not st2:
+                        continue
+                    w2 = min(s["agree"] for s in st2.values())
+                    sp2 = max(s["agree"] for s in st2.values()) - w2
+                    if m2 >= BAR_MEAN and w2 >= BAR_LAYER and sp2 <= BAR_SPREAD:
+                        lines.append(f"{arm}: mean {m2:.4f} worst {w2:.4f} spread {sp2:.4f} "
+                                     f"meets all three numeric conditions but cannot gate "
+                                     f"(section 4); {ARM_BYTES[arm]} B/block vs A1(4) 80 B")
                 # weighting robustness: layer-averaged and step-averaged means
                 lc, ls = {}, {}
                 with open(os.path.join(args.out, f"rows_{ctx}_fixed.tsv")) as rf:
@@ -867,9 +931,13 @@ def _report(args):
                 vbits = ab["probes"][v]["realized_mean_bits"]
                 equal = abs(vbits - a4_bits) <= A3_BITS_TOL * a4_bits
                 gates = bool(equal and mn >= a4_mean + A3_GATE_MARGIN)
+                active = ab["probes"][v].get("constraint_active", True)
+                slack = ("" if active else
+                         " [budget slack: floor theta, constraint inactive, depth rule degenerate]")
                 lines.append(f"A3 {v}: mean {mn:.4f} vs {ab['A4']} {a4_mean:.4f} "
                              f"(delta {mn-a4_mean:+.4f}); bits {vbits:.1f} vs {a4_bits:.1f} "
-                             f"({'equal' if equal else 'NOT equal'}); gate {'PASS' if gates else 'FAIL'}")
+                             f"({'equal' if equal else 'NOT equal'}); gate {'PASS' if gates else 'FAIL'}"
+                             f"{slack}")
     text = "\n".join(lines)
     print(text)
     with open(os.path.join(args.out, "report.txt"), "w") as f:
