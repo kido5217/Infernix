@@ -75,10 +75,13 @@ block ids of `ratio = 4` tokens each):
 ### 1.3 The paper's metric, recomputed on our selections **(new)**
 
 I recomputed the paper's quantity `f(w) = mean_tiles |⋂_{q∈tile} S_q| / 512` from the same
-`selected.bin`/`counts.bin` captures, using the measurement branch's conventions exactly — its
-`tile_union_layer` pooling (the mean of the per-tile ratios **within** a layer, then the mean across
-the 12 layers), prefill captures with `columns ≥ 1000`, keyed by `pooled_ptr`, ordered by
-`min_position`, dense columns excluded. The four widths that matter for the decision:
+`selected.bin`/`counts.bin` captures, using the measurement branch's conventions — the same per-tile
+pooling as its `tile_union_layer` (the mean of the per-tile ratios **within** a layer, then the mean
+across the 12 layers), prefill captures with `columns ≥ 1000`, keyed by `pooled_ptr`, ordered by
+`min_position`, dense columns excluded. The one difference from `tile_union_layer` is the partial
+remainder tile: the branch keeps it, the pseudocode below drops it, and that choice moves any cell in
+the table by at most **0.0003** (16K w=4 reads 0.3864 and w=8 0.2155 when the tail tile is kept).
+The four widths that matter for the decision:
 
 | context | w=2 | w=4 | w=8 | w=16 |
 |---|---|---|---|---|
@@ -122,7 +125,9 @@ The paper and the measurement branch are **not** measuring the same thing, and n
    For sets of size `K` with common intersection `fK`, `|⋃| ≤ fK + w(1−f)K` gives the bound
    `1 − |⋃|/(wK) ≥ f·(1 − 1/w)`, tight when the query-specific residues are disjoint:
    - w=2: the bound is an **identity** — `1 − |A∪B|/(2K) = |A∩B|/(2K) = f/2` — so there is no gap to
-explain: with the same pooling, `0.6365/2 = 0.31825` against the measured **0.31821**, exact.
+     explain. Pooled the same way (both dropping the remainder tile) the two sides are bit-identical:
+     `f/2 = 0.318240` and the union `1 − |⋃|/(2·512) = 0.318240`. Against the branch's **kept**-tail
+     figure (0.31821) the residual is 3e-5, the remainder tile again, not a gap.
    - w=8: 16K bound `0.2152·0.875 = 0.188` vs measured **0.704**; 140K bound `0.098` vs **0.587** — the
      residues overlap heavily, so the union redundancy is far above the intersection bound.
 3. **Paper's processed-KV reduction** (Tables 3, 4). A **fully-recursed cascade processes every distinct
