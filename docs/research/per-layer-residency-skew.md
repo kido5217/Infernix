@@ -189,8 +189,9 @@ misses/generated token:
 | seed (c) | 53.471 | 54.170 (−18.91 %) | 51.173 |
 | seed+w_entropy | 57.439 | 58.182 (−12.91 %) | 54.943 |
 
-The verdict is unchanged at point (b): every relative change moves by ≤0.3 points, and the winner's
-gain is 18.91 % there against 19.16 % at the header frames.
+The verdict is unchanged at point (b): the largest relative move between the two capacity points is
+`quota_even`'s 0.61 points (+4.55 % to +3.94 %), and the winner's gain is 18.91 % there against
+19.16 % at the header frames.
 
 ## Reproduce
 
@@ -205,7 +206,12 @@ python3 tools/expert_cache_replay/per_layer_skew.py arms --jobs 16 --json out/pe
 
 The `arms` run prints the arm table across the deployed capacity, the **per-round profile** and the
 sweep, and writes the capacity vectors, the allocator thresholds and the sensitivity to JSON.
-Deserialize with the repo's `read_trace`. A full run is CPU-bound and takes on the order of half an
-hour.
+Deserialize with the repo's `read_trace`. A full run is CPU-bound: about five minutes at `--jobs 16`,
+around an hour with the default single worker.
 
 Branch `proto/per-layer-residency-skew`. The prototype is deliberately unpolished and unmerged.
+
+One correction the prototype's own history cannot show: the sequential control's first version
+omitted the layer offset in its access keys and was therefore capacity-independent — every access
+missed, a ~97 % miss rate. The reported arm (v) is the corrected version; the branch is a single
+squashed commit, so the wrong intermediate state is not reconstructable from it.

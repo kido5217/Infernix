@@ -103,7 +103,9 @@ class SkewSim:
         self.v_last = np.zeros(self.N, dtype=np.int64)
         self.v_now = 0
         self.v_pos = np.full(self.N, -1, dtype=np.int64)
-        self.v_keys = np.zeros(max(self.V, 1), dtype=np.int64)
+        # Sized for the whole pool, not for the initial V: with `per_round_vram` a round may raise
+        # V above the header's frame count, and `_insert` indexes this by resident count.
+        self.v_keys = np.zeros(self.N, dtype=np.int64)
         self.v_n = 0
         self.visible = np.zeros(self.N, dtype=np.int64)   # first round a frame is readable
         self.mark = np.zeros(self.N, dtype=bool)
