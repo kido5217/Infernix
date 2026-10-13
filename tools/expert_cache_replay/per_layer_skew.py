@@ -72,11 +72,14 @@ class SkewSim:
     """
 
     def __init__(self, header, vram, *, quota=None, weights=None, atomic=True,
-                 seed_keys=None, seed_count=0):
+                 seed_keys=None, seed_count=0, per_round_vram=False):
         self.L, self.E, self.K = header['layers'], header['experts'], header['top_k']
         self.N = self.L * self.E
         self.V = max(0, min(int(vram), self.N - 1))
         self.atomic = atomic
+        # Protocol §2 point (b): follow the trace's own per-round frame count instead of one fixed
+        # V, so the same arm can also be read at the time-weighted mean capacity.
+        self.per_round_vram = per_round_vram
         self.lay = np.arange(self.N, dtype=np.int64) // self.E
         if weights is None:
             self.wkey = None
@@ -236,6 +239,8 @@ class SkewSim:
 
     # ------------------------------------------------------------------ round
     def step(self, r, budget):
+        if self.per_round_vram and getattr(r, 'frames', 0):
+            self.V = max(0, min(int(r.frames), self.N - 1))
         # Policy side: distinct live routed experts per layer (host_tier's `live_routes`).
         # Accounting for every layer runs before any admission of the round, exactly as
         # host_tier does; otherwise a same-round eviction could hide a later layer's hit.
@@ -243,7 +248,11 @@ class SkewSim:
         live = r.routes[:, r.live, :].reshape(self.L, -1) + layer_base
         is_gen = r.kind in GENERATION_KINDS
         if is_gen:
-            self.tokens[r.kind] += int(np.count_nonzero(r.live))
+            # host_tier.py:739-748 counts a FORCED round as rows*width columns and a Decode/Verify
+            # round as its live count. No Forced rounds exist in the current traces, but the unit is
+            # the protocol's, so both simulators must agree for traces that carry them.
+            self.tokens[r.kind] += (int(r.rows) * int(r.width) if r.kind == FORCED
+                                    else int(np.count_nonzero(r.live)))
         groups = []
         for layer in range(self.L):
             group = np.unique(live[layer])
@@ -301,9 +310,9 @@ def load_sessions(names=None, trace_dir=TRACE_DIR):
     return out
 
 
-def simulate(session, vram=None, **kwargs):
+def simulate(session, vram=None, per_round=False, **kwargs):
     vram = session.frames if not vram else vram
-    sim = SkewSim(session.header, vram, **kwargs)
+    sim = SkewSim(session.header, vram, per_round_vram=per_round, **kwargs)
     summary = sim.run(session.rounds)
     summary['vram'] = int(sim.V)
     return summary
@@ -518,9 +527,11 @@ def seed_orders(sessions, loo=True):
 # ---------------------------------------------------------------------------------------------- arms driver
 
 def _sim_job(job):
-    name, V, arm, kwargs = job
+    name, V, arm, kwargs = job[:4]
+    mode = job[4] if len(job) > 4 else 'fixed'
     r = simulate(_SESS_CACHE[name], vram=V, **kwargs)
-    return {'session': name, 'V': int(V), 'arm': arm, 'misses_per_token': r['misses_per_token'],
+    return {'session': name, 'V': int(V), 'arm': arm, 'mode': mode,
+            'misses_per_token': r['misses_per_token'],
             'generated_tokens': r['generated_tokens'], 'misses': r['live_vram_misses'],
             'hit_rate': r['hit_rate']}
 
@@ -567,8 +578,10 @@ def cmd_arms(args):
     def seed_keys(name, V):
         return orders[name][:max(1, int(round(share * V)))]
 
-    # ---- columns: deployed + sweep -------------------------------------------
-    columns = [('deployed', lambda s: s.frames)] + [(str(v), (lambda s, v=v: v)) for v in sweep]
+    # ---- columns: deployed (header frames) + the per-round profile + the sweep ----
+    columns = ([('deployed', lambda s: s.frames, 'fixed'),
+                ('profile', lambda s: s.frames, 'profile')]
+               + [(str(v), (lambda s, v=v: v), 'fixed') for v in sweep])
 
     amps = list(dict.fromkeys([0.25, 0.5, args.amp]))
     w_by_amp = {a: entropy_weights(H, a) for a in amps}
@@ -596,29 +609,36 @@ def cmd_arms(args):
 
     arms = (['uniform', 'sequential', 'quota_even', 'quota']
             + [f'w_ent{a:g}' for a in amps] + ['w_permuted', 'seed', 'seed+w_entropy'])
-    jobs = [(s.name, V, arm, kwargs_for(arm, s, V))
-            for arm in arms for label, getV in columns for s in sessions for V in [getV(s)]]
+    def job_kwargs(arm, s, V, mode):
+        kw = kwargs_for(arm, s, V)
+        return {**kw, 'per_round': True} if mode == 'profile' else kw
+
+    jobs = [(s.name, getV(s), arm, job_kwargs(arm, s, getV(s), mode), mode)
+            for arm in arms for _label, getV, mode in columns for s in sessions]
     results = _run(jobs, args.trace_dir, args.jobs)
 
     # ---- aggregate -----------------------------------------------------------
+    def label_of(r):
+        if r['mode'] == 'profile':
+            return 'profile'
+        return 'deployed' if r['V'] == _SESS_CACHE[r['session']].frames else str(r['V'])
+
     table = {}   # (arm, label) -> pooled
     per = {}     # (arm, label) -> {session: m/t}
     for r in results:
-        label = 'deployed' if r['V'] == _SESS_CACHE[r['session']].frames else str(r['V'])
-        per.setdefault((r['arm'], label), {})[r['session']] = r['misses_per_token']
+        per.setdefault((r['arm'], label_of(r)), {})[r['session']] = r['misses_per_token']
     for arm in arms:
-        for label, _ in columns:
-            rows = [r for r in results if r['arm'] == arm and
-                    label == ('deployed' if r['V'] == _SESS_CACHE[r['session']].frames else str(r['V']))]
+        for label, _getV, _mode in columns:
+            rows = [r for r in results if r['arm'] == arm and label_of(r) == label]
             table[(arm, label)] = _pooled(rows)
 
     print(f'\n=== pooled misses per generated token (event-atomic unless stated) ===')
-    hdr = 'arm'.ljust(16) + ''.join(f'{l:>12s}' for l, _ in columns)
+    hdr = 'arm'.ljust(16) + ''.join(f'{l:>12s}' for l, *_ in columns)
     print(hdr)
     for arm in arms:
         ctrl_dev = table[('uniform', 'deployed')]
         ctrl = table[('uniform', 'deployed')]
-        cells = ''.join(f'{table[(arm, l)]:>12.3f}' for l, _ in columns)
+        cells = ''.join(f'{table[(arm, l)]:>12.3f}' for l, *_ in columns)
         rel = 100 * (table[(arm, 'deployed')] / ctrl_dev - 1)
         print(f'{arm:16s}{cells}   ({rel:+.2f}% at deployed)')
     print('\nper-session deployed misses/token:')
@@ -674,7 +694,7 @@ def cmd_arms(args):
         with open(args.json, 'w') as f:
             json.dump({'calibration_note': 'uniform arm matches host_tier --vram-budget recorded',
                        'entropy': {'pooled': H.tolist(), 'weights': w_ent.tolist()},
-                       'table': {a: {l: table[(a, l)] for l, _ in columns} for a in arms},
+                       'table': {a: {l: table[(a, l)] for l, *_ in columns} for a in arms},
                        'per_session_deployed': {a: per[(a, 'deployed')] for a in arms},
                        'capacity_vectors': {str(V): Kvec[V].tolist() for V in all_V},
                        'allocator': {str(V): {'deltaK': alloc[V]['deltaK'], 'eps_drop': alloc[V]['eps_drop'],

@@ -115,9 +115,13 @@ skew *input* is real; the skew *mechanism* is not a win.
   −25.9 %, short-2 −32.5 %) and small where it does (long-1 −8.9 %, long-3 −22.7 %).
 - **Separated.** `seed` (flat weights) is −19.16 %; `seed + entropy weights` is −13.16 %. The skew
   shape *subtracts* 6 points from the prior. Every point of the winning arm's gain is the prior.
-- **Capacity shape specifically.** Arm (a) reallocates **1,050 slots = 12.9 % of the pool** (L1, at
-  V = 8142; `K_l` from 106 to 254) yet moves the pooled metric by +0.05 %. **Per 1 % of pool
-  reallocated, the marginal effect is ~0.004 %** — indistinguishable from zero at this capacity.
+- **Capacity shape specifically.** Arm (a) moves `K_l` between 106 and 254 at V = 8142 while
+  `sum(K_l) = V`. Measured as the capacity actually handed from one layer to another —
+  `sum(max(even_l - K_l, 0))` = **525 slots = 6.45 % of the pool**, not the 1,050 that
+  `sum|K_l - even_l|` double-counts — the pooled metric moves +0.05 %. **Per 1 % of pool
+  reallocated, the marginal effect is ~0.0078 %** — indistinguishable from zero at this capacity.
+  (Equal partition, which moves the same capacity without fitting it, costs +4.55 %; the allocator
+  recovers that and lands back at parity.)
 
 ## Arm (a) capacity vector and threshold sensitivity
 
@@ -166,11 +170,42 @@ decides which transfers happen. No setting beats global LFRU.
   cache fills only as fast as the trace's own promotion budget allows — which is itself what makes
   the warm start valuable.
 
+## Capacity point (b) — the per-round profile
+
+The protocol scores the offline bar at **both** the trace header's `frames` and the time-weighted
+mean capacity actually held. The `profile` column does the second: the sim follows the trace's own
+per-round frame count instead of one fixed `V` (`per_round_vram`, `per_layer_skew.py`). Pooled
+misses/generated token:
+
+| arm | deployed (header frames) | profile (per-round frames) | sweep 8351 |
+|---|---:|---:|---:|
+| uniform (iv) | 66.142 | 66.806 | 64.171 |
+| sequential (v) | 72.032 | 72.688 (+8.80 %) | 69.855 |
+| quota_even | 69.152 | 69.437 (+3.94 %) | 67.212 |
+| quota (a) | 66.175 | 66.801 (−0.01 %) | 64.251 |
+| w_ent 0.25 | 66.006 | 66.685 (−0.18 %) | 64.056 |
+| w_ent 1.0 (b) | 70.034 | 70.788 (+5.96 %) | 67.801 |
+| w_permuted | 73.650 | 74.460 (+11.46 %) | 71.320 |
+| seed (c) | 53.471 | 54.170 (−18.91 %) | 51.173 |
+| seed+w_entropy | 57.439 | 58.182 (−12.91 %) | 54.943 |
+
+The verdict is unchanged at point (b): every relative change moves by ≤0.3 points, and the winner's
+gain is 18.91 % there against 19.16 % at the header frames.
+
 ## Reproduce
+
+Prerequisites: the eight traces at `out/route-traces/*.bin` (git-ignored — record them with
+`bench/route_traces/record.py`, see that directory's README) and a Python with numpy (the repo's
+`nix develop .` shell, Python 3.13; the module itself needs no other dependency).
 
 ```
 python3 tools/expert_cache_replay/per_layer_skew.py calibrate
 python3 tools/expert_cache_replay/per_layer_skew.py arms --jobs 16 --json out/per-layer-skew.json
 ```
+
+The `arms` run prints the arm table across the deployed capacity, the **per-round profile** and the
+sweep, and writes the capacity vectors, the allocator thresholds and the sensitivity to JSON.
+Deserialize with the repo's `read_trace`. A full run is CPU-bound and takes on the order of half an
+hour.
 
 Branch `proto/per-layer-residency-skew`. The prototype is deliberately unpolished and unmerged.
