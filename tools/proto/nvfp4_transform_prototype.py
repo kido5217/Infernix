@@ -36,9 +36,14 @@ The script reuses the repo's own codec (``tools/convert/quantization/nvfp4.py``,
 re-implements the OSFP4 optimizer and the DualQuant BCD from their papers (nothing is vendored).
 
 Report self-description.  ``environment`` carries the interpreter, the torch/numpy versions and the
-git sha of this checkout; ``reproduction`` carries the exact capture, self-check and report
-commands, derived from this process's own argv and executable plus the module's frozen S2 root,
-gating layers and prompt tokens (never a hand-typed string), as both argv lists and shell lines.
+git revision of this checkout -- the full ``git_sha``, its ``git_short_sha`` abbreviation, and
+``git_dirty`` (True when ``git status --porcelain`` reported any change relative to HEAD when the
+run started, other than this tool's own report artifacts, which are output and excluded), all read
+from the git process -- so a report can be traced to the exact revision of this module that produced
+it and a run from a modified tree is marked as such; ``reproduction`` carries the exact capture,
+self-check and report commands, derived from this process's own argv and executable plus the module's
+frozen S2 root, gating layers and prompt tokens (never a hand-typed string), as both argv lists and
+shell lines.
 Every arm record in ``matrices`` carries the actual per-matrix ``weight_divisor`` (binary32) and
 ``weight_target`` as well as the ``activation_divisor`` (binary32) and ``activation_target``, so the
 divisor choice is auditable per matrix and not only named as a rule.  G3/X1 additionally carry
@@ -881,7 +886,12 @@ INTERPRETATIONS = [
     "Self-description: the `reproduction` block records the exact capture, self-check and report "
     "commands, built from this process's argv and executable plus the module's frozen S2 root, "
     "gating layers and prompt tokens (never a hand-typed string); `environment` records the "
-    "interpreter, torch/numpy versions and the git sha of this checkout.",
+    "interpreter, torch/numpy versions and the git revision of this checkout -- `git_sha` (full), "
+    "`git_short_sha`, and `git_dirty`, True when `git status --porcelain` reported any change "
+    "relative to HEAD other than this tool's own report artifacts (they are output, not generating "
+    "code, so they are excluded from the check).  The committed reports were generated from a tree "
+    "whose only change was those artifacts, so `git_dirty` is False and `git_sha` names the exact "
+    "committed revision of this module that ran.",
     "Alpha-fold attribution (G3/X1).  `fold_relative_l2` is the fold's own re-rounding loss: the "
     "relative L2 distance between the folded representation (alpha_inv multiplied into, and "
     "re-rounded within, the stored E4M3 block scale) and the same representation with alpha_inv "
@@ -912,17 +922,71 @@ def _module_name() -> str:
         return Path(__file__).stem
 
 
-def _git_sha() -> str | None:
-    """The checkout's HEAD sha, read from git; ``None`` when the tree is not a git checkout."""
+def _git(*args: str) -> str:
+    """Run ``git -C <repo root> <args>`` and return its stdout with the trailing newline removed.
+
+    Only the trailing newline is removed: ``git status --porcelain`` lines begin with a significant
+    space (the two-character ``XY`` status), so stripping all whitespace would corrupt them.
+    """
+
+    completed = subprocess.run(
+        ["git", "-C", str(_repo_root()), *args],
+        check=True, capture_output=True, text=True, timeout=10,
+    )
+    return completed.stdout.rstrip("\n")
+
+
+_REPORT_ARTIFACT_SUFFIXES = ("selfcheck.json", "report.json", "report.bcd-reciprocal.json")
+
+
+def _report_artifact_paths(out: Path | None = None) -> set[str]:
+    """Repo-relative paths of this tool's own report artifacts (its output, not its code).
+
+    ``git_dirty`` excludes them: rewriting the reports does not mean the generating code changed.
+    """
+
+    root = _repo_root()
+    stem = Path(__file__).resolve().stem
+    candidates = [_sibling_output(stem, suffix) for suffix in _REPORT_ARTIFACT_SUFFIXES]
+    if out is not None:
+        candidates.append(out)
+    paths: set[str] = set()
+    for candidate in candidates:
+        try:
+            paths.add(candidate.resolve().relative_to(root).as_posix())
+        except ValueError:
+            continue  # outside the repo, so it cannot appear in `git status`
+    return paths
+
+
+def _porcelain_path(line: str) -> str:
+    """The repo-relative path a ``git status --porcelain`` line refers to."""
+
+    path = line[3:]
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    return path.strip().strip('"')
+
+
+def _git_state(out: Path | None = None) -> dict:
+    """The checkout's revision and working-tree state, read from the git process.
+
+    ``git_sha`` is the full HEAD sha and ``git_short_sha`` its abbreviation, so the report names the
+    exact revision of this module that produced it.  ``git_dirty`` is True when ``git status
+    --porcelain`` reports a change other than this tool's own report artifacts (its output, not its
+    code), i.e. when the generating code itself carried uncommitted edits.  ``None`` values mean the
+    tool is not inside a git checkout.  Nothing here is a literal.
+    """
 
     try:
-        completed = subprocess.run(
-            ["git", "-C", str(_repo_root()), "rev-parse", "HEAD"],
-            check=True, capture_output=True, text=True, timeout=10,
-        )
-        return completed.stdout.strip() or None
+        sha = _git("rev-parse", "HEAD")
+        short = _git("rev-parse", "--short", "HEAD")
+        status = _git("status", "--porcelain")
     except (OSError, subprocess.SubprocessError):
-        return None
+        return {"git_sha": None, "git_short_sha": None, "git_dirty": None}
+    artifacts = _report_artifact_paths(out)
+    dirty = any(_porcelain_path(line) not in artifacts for line in status.splitlines())
+    return {"git_sha": sha or None, "git_short_sha": short or None, "git_dirty": dirty}
 
 
 def _sibling_output(stem: str, suffix: str) -> Path:
@@ -1082,7 +1146,7 @@ def main(argv=None) -> int:
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "environment": {"python": sys.version.split()[0],
                         "torch": torch.__version__, "numpy": np.__version__,
-                        "git_sha": _git_sha()},
+                        **_git_state(args.out)},
         "reproduction": reproduction_block(args),
         "bcd_variant": args.bcd_variant,
         "seed": SEED,
