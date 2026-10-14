@@ -83,7 +83,7 @@ infernix_bench --weights <artifact.ninfer>
           [--concurrency <1..8>]
           [--grammar-file <path> | --json-schema-file <path> | --json-object | --regex <pattern> | --choice <text> ...]
           [--mixed-constraints]
-          [--max-ctx <tokens>] [--prefill-chunk <tokens>]
+          [--max-ctx <tokens>] [--prefill-chunk <tokens>] [--prefill auto[:N]]
           [--kv-dtype <bf16|int8|fp8|nvfp4|k8v4|vq2|k4v2>] [--use-original-int8-prefill-kernel]
           [--prefill-8bit-pv | --no-prefill-8bit-pv] [--use-original-nvfp4-prefill-kernel]
           [--prefill-split-workspace-mib <n>]
@@ -93,6 +93,12 @@ infernix_bench --weights <artifact.ninfer>
 ```
 
 With no `-p`, `-n`, or `-pg`, the matrix is `pp512` and `tg128`.
+
+`--prefill auto[:N]` (Qwen3.8-Flash-Next) accepts the serve flag's forms — `auto`, `auto:8192`,
+`auto:16384`, `auto:32768` — and requires N at least `--prefill-chunk`. Every prefill then resolves
+its chunk per request from the live expert-cache loan, and the fixed `--prefill-chunk` stays the
+fallback and the io staging cap. Use it to measure the lent-chunk route on the same harness as the
+published chunk table. Other architectures ignore it.
 
 `--rope-yarn-factor F` selects the startup-fixed runtime YaRN factor, finite `[1,4]`, default `1`
 (native RoPE). It extends only the allowed ceiling, not the context selected from the workload or
@@ -135,7 +141,7 @@ time. Per-request phase rates remain separate from this aggregate throughput.
 The benchmark disables context retention because every repetition is an independent root request.
 Schema v16 records `speculative_backend`, `draft_tokens`, and the proposal head independently;
 JSON and CSV identify DFlash2 explicitly. MTP alone reserves its extra lookahead KV margin.
-Schema v20 adds `rope_yarn_factor`, `ngram_draft_tokens` and `ngram_min_match` to `config`.
+Schema v20 adds `rope_yarn_factor`, `ngram_draft_tokens` and `ngram_min_match` to `config`; v21 adds `prefill_auto_ceiling` beside `prefill_chunk`, the ceiling `--prefill auto[:N]` resolves chunks against (0 = off, the fixed route).
 
 `--ngram-draft-tokens 1..63 --ngram-min-match 4..64` enables the single-request
 [ngram copy proposer](../docs/ngram.md) alongside the selected neural backend.

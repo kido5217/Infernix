@@ -592,6 +592,10 @@ BenchOptions parse_args(int argc, char** argv) {
     if (options.prefill_chunk % kPrefillChunkAlignment != 0) {
         throw std::invalid_argument("--prefill-chunk must be a multiple of 128");
     }
+    if (options.prefill_auto_ceiling != 0 && options.prefill_auto_ceiling < options.prefill_chunk) {
+        throw std::invalid_argument(
+            "--prefill auto[:N] needs N >= --prefill-chunk: the fixed chunk is the fallback");
+    }
     product::validate_speculative_cli_options(options.speculative);
     return options;
 }

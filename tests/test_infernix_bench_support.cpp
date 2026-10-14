@@ -163,6 +163,12 @@ int test_cli_contract() {
                 {"infernix_bench", "--weights", "model.ninfer", "--prefill", "4096"});
         },
         "fixed chunk through --prefill");
+    failures += expect_throws<std::invalid_argument>(
+        [] {
+            (void)parse_for_test({"infernix_bench", "--weights", "model.ninfer", "--prefill-chunk",
+                                  "32768", "--prefill", "auto:8192"});
+        },
+        "auto ceiling below the fixed fallback");
     failures += expect(parsed.kv_cache == infernix::KvCacheStorage::Int8Group64, "INT8 KV");
     failures += expect(parsed.speculative.draft_tokens == 5, "MTP window");
     failures += expect(parsed.speculative.proposal_head == infernix::ProposalHead::Optimized,

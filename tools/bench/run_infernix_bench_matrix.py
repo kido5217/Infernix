@@ -35,12 +35,14 @@ DEFAULT_CORPUS = REPO_ROOT / "bench/fixtures/bench_corpus.ids"
 PREFILL_LENGTHS_CORE = (128, 256, 512, 1024, 2048, 4096, 8192, 16384)
 PREFILL_LENGTHS_FULL_EXTRA = (32768, 65536)
 PREFILL_CHUNKS = (128, 256, 512, 1024, 2048, 4096)
+# Fixed chunks whose lent counterpart is measured: the published trade-off grid (design §19.4).
+AUTO_PREFILL_CHUNKS = (1024, 2048, 4096)
 PURE_DECODE_GENS = (16, 64, 128, 512, 2048)
 CONTEXT_CORE = ((512, 512), (2048, 512), (8192, 512))
 CONTEXT_FULL_EXTRA = ((32768, 256), (65536, 128))
 PRIMARY_KS = (0, 3, 5)
 SWEEP_KS = (0, 1, 2, 3, 4, 5)
-REPORT_SCHEMA_VERSION = 20
+REPORT_SCHEMA_VERSION = 21
 REPORT_ARTIFACT_TYPE = "infernix_bench_report"
 REPORT_TOOL = "infernix_bench"
 
@@ -139,6 +141,27 @@ def build_cases(preset: str) -> list[BenchCase]:
                     3,
                     1,
                     "workspace and chunk-size sensitivity",
+                )
+            )
+
+    for k in PRIMARY_KS:
+        for chunk in AUTO_PREFILL_CHUNKS:
+            cases.append(
+                BenchCase(
+                    "prefill_auto",
+                    f"prefill_auto_p8192_chunk{chunk}_k{k}",
+                    (
+                        "-p",
+                        "8192",
+                        "--prefill-chunk",
+                        str(chunk),
+                        "--prefill",
+                        "auto:32768",
+                        *mtp_args(k),
+                    ),
+                    3,
+                    1,
+                    "lent prefill chunk: the expert cache sizes each chunk; the fixed chunk is the fallback and io cap",
                 )
             )
 
@@ -293,6 +316,7 @@ def report_rows(report_path: Path, case: BenchCase) -> list[dict[str, Any]]:
             "mixed_constraints": config.get("mixed_constraints"),
             "kv_capacity": memory.get("kv_capacity"),
             "prefill_chunk": config.get("prefill_chunk"),
+            "prefill_auto_ceiling": config.get("prefill_auto_ceiling"),
             "kv_cache": config.get("kv_cache"),
             "speculative_backend": config.get("speculative_backend"),
             "draft_tokens": config.get("draft_tokens"),
