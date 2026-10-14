@@ -203,6 +203,8 @@ ConstructedQwen4Exp construct_qwen4_exp(const EngineOptions& options, DeviceCont
         program_options.prefix_taps.max_new_taps   = cache.hybrid.max_new_taps.value();
         program_options.prefix_taps.ladder_tokens  = cache.hybrid.tap_ladder_tokens.value();
         program_options.prefix_taps.min_gap_tokens = cache.hybrid.tap_min_gap_tokens.value();
+        program_options.prefix_taps_ladder_defaulted = !cache.hybrid.tap_ladder_explicit;
+        program_options.prefix_taps_gap_defaulted    = !cache.hybrid.tap_min_gap_explicit;
         // Fitted 2026-10-05 (RTX 5090 at PCIe 5.0 x8, INT8 KV; design §19.4): 1.67 s per layer-walk
         // span, 0.16 s per further call, 22 us per token and 1.06 ns per attention pair, within 5 %
         // from 4K to 128K. The span is one pass of the experts over the link: the Program rescales

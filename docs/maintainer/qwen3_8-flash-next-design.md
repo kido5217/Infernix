@@ -1950,11 +1950,12 @@ process-wide fault seam for the engine test; S3 only past its threshold; S4 park
   resident experts; it is 16K-32K for a solo long prompt. A short tail (< 1K) that moves only its
   own routed experts stays separate. architectds/Strata measured +21-59% at 9K-100K from these two
   rules.
-  *(Status 2026-10-14: prefill-arena lending at per-request resolved chunks — `--prefill auto[:N]`
-  on the 128-token / whole-wave grid, priced by the parametric layout terms and resolved from the
-  live lendable frames — is ported by #73; see `prefill_sizing.h` and the `--prefill` entry in
-  [serving](../serving.md). The equal-chunk tail rule and the hardware qualification (§13's measured
-  trade-off becoming a pure gain) are #76's.)*
+  *(Status 2026-10-14: both rules are ported by #73 — prefill-arena lending at per-request
+  resolved chunks (`--prefill auto[:N]` on the 128-token / whole-wave grid, priced by the parametric
+  layout terms resolved from the live lendable frames) and the equal-chunk/short-tail segmentation
+  (`call_plan.cpp`, `prefill_sizing::equal_chunk_width`, auto route only). The qualification that
+  §13's measured trade-off becomes a pure gain is #76's. See `prefill_sizing.h` and the
+  `--prefill` entry in [serving](../serving.md).)*
 - **Expert supply.** There are two regimes, with the threshold from calibration (Strata uses 1,024
   tokens; the fork 3,072 with CPU assist):
   - **Streamed walk** (chunk ≥ threshold). Almost every expert is used. While layer l computes,

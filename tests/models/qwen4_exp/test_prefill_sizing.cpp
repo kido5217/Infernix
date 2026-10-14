@@ -166,6 +166,78 @@ void test_ring_regime() {
           "an unstreamed chunk prices no ring");
 }
 
+void test_frame_rounding() {
+    // The price rounds up to whole frames as the lease does (review Minor 4): a budget of k frames
+    // funds exactly the chunks whose rounded price is at most k frames — never under-booked.
+    const std::uint64_t stride = 2936012;
+    LinearArena arena{.base = 1000, .per_column = 100};
+    ps::LoanTerms terms = linear_terms(arena, 56, 0);
+    terms.frame_round   = stride;
+    check(terms.bytes(128) % stride == 0, "the rounded price is a whole frame count");
+    check(terms.bytes(128) >= 1000 + 128ULL * 156, "rounding never under-books the raw sum");
+    bool monotone = true;
+    for (std::uint32_t chunk = 128; chunk <= 8064; chunk += 128) {
+        monotone = monotone && terms.bytes(chunk) <= terms.bytes(chunk + 128);
+    }
+    check(monotone, "frame rounding keeps the price monotone");
+    const ps::ChunkGrid grid{.step = 128, .ceiling = 8192};
+    const std::uint64_t at = terms.bytes(4096);
+    const std::uint32_t fit = ps::largest_fitting_chunk(grid, terms, at);
+    check(fit >= 4096 && terms.bytes(fit) == at, "a frame-priced budget funds up to its frame boundary");
+    check(ps::largest_fitting_chunk(grid, terms, at - 1) < fit,
+          "a budget one byte below a frame boundary falls to a cheaper chunk");
+}
+
+void test_walk_price() {
+    // A walk-eligible chunk prices its span's area (review Minor 5); an unstreamed chunk prices
+    // neither ring nor walk area.
+    const std::uint64_t ring = 1ULL << 30, residual = 1ULL << 20, chunks = 256;
+    LinearArena arena{.base = 0, .per_column = 1024};
+    ps::LoanTerms terms = linear_terms(arena, 56, ring);
+    terms.walk_residual = residual;
+    terms.walk_chunks   = chunks;
+    const std::uint64_t with = terms.bytes(256);
+    check(with == ring + residual + chunks * 256ULL * 56 + terms.fixed +
+                      256ULL * (56 + terms.route_log_per_column) + arena.per_column * 256,
+          "a streamed chunk prices ring, walk residuals and walk io slots");
+    terms.stream_min_columns = 4096;
+    check(terms.bytes(2048) < with, "an unstreamed chunk prices no walk area");
+}
+
+void test_wide_staging_and_grow() {
+    // The io view is decided from the lane's resolved chunk, not one call's width (Important 1):
+    // a plan whose first call is narrow and whose later span calls reach the chunk still stages
+    // wide, and a prompt that never exceeds the static cap never widens.
+    check(ps::wide_staging_columns(896, 4096) == 0, "a chunk inside the static staging stays static");
+    check(ps::wide_staging_columns(8064, 4096) == 8064,
+          "the span's first call narrow, a later call at the chunk: the view is the chunk's");
+    // The mirror's growth rule (Important 2): two differing resolved chunks reuse, replace or go
+    // transient as the walk holds the layout or not.
+    check(ps::io_grow_decision(false, 0, 8064, false) == ps::IoGrow::Allocate, "first wide prompt allocates");
+    check(ps::io_grow_decision(true, 8064, 4096, false) == ps::IoGrow::Reuse,
+          "a mirror held at the larger width serves a narrower prompt");
+    check(ps::io_grow_decision(true, 1024, 8064, false) == ps::IoGrow::Replace, "a growing need replaces it");
+    check(ps::io_grow_decision(true, 1024, 8064, true) == ps::IoGrow::Transient,
+          "a walk holding the stride defers the growth to a per-unit mirror");
+}
+
+void test_equal_chunks() {
+    // The §13 tail rule as pure arithmetic (Important 3): equal widths only when the tail is at
+    // least the short-tail bound; zero (disabled) keeps the grid; a divisible segment needs none.
+    check(ps::equal_chunk_width(7000, 4096, 1024) == 3500, "two equal chunks replace a 2904-tail split");
+    check(ps::equal_chunk_width(5220, 4096, 1024) == 2610, "a 1124 tail widens to two equal calls");
+    check(ps::equal_chunk_width(4608, 4096, 1024) == 0, "a 512 short tail stays its own call");
+    check(ps::equal_chunk_width(8192, 4096, 1024) == 0, "a divisible segment keeps the grid");
+    check(ps::equal_chunk_width(4000, 4096, 1024) == 0, "one call is already equal");
+    check(ps::equal_chunk_width(7000, 4096, 0) == 0, "min_tail 0 disables the rule (the fixed route)");
+    bool widths_ok = true;
+    for (std::uint32_t len = 4097; len < 40000; len += 61) {
+        const std::uint32_t w = ps::equal_chunk_width(len, 4096, 1024);
+        widths_ok = widths_ok && (w == 0 || (w <= 4096 && (len - 1) / w + 1 == (len + 4095) / 4096));
+    }
+    check(widths_ok, "an equal width never raises the call count and never exceeds the chunk");
+}
+
 } // namespace
 
 int main() {
@@ -175,6 +247,10 @@ int main() {
     test_monotone_price();
     test_term_builders();
     test_ring_regime();
+    test_frame_rounding();
+    test_walk_price();
+    test_wide_staging_and_grow();
+    test_equal_chunks();
     if (failures == 0) { std::fprintf(stderr, "prefill sizing: all checks passed\n"); }
     return failures == 0 ? 0 : 1;
 }

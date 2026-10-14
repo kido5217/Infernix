@@ -257,6 +257,10 @@ struct HybridPrefixCacheOptions {
     // Ladder taps closer than this to another snapshot on the same path are skipped. Default
     // max(1024, prefill_chunk).
     std::optional<std::uint32_t> tap_min_gap_tokens;
+    // Whether the two tap spacings came from the operator (set during option normalization).
+    // Qwen3.8-Flash-Next `--prefill auto` re-anchors defaulted ladders on the resolved chunk
+    // (design §13); explicit --cache-tap-* values are used as given.
+    bool tap_ladder_explicit = false, tap_min_gap_explicit = false;
     // Opt-in persistence of the Host tier: saved to this file when the Engine shuts down cleanly
     // and restored from it at startup, but only when it was written for the same artifact, KV and
     // state formats and `persistent_identity` (the product binary's build). Empty disables it.

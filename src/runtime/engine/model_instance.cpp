@@ -217,6 +217,8 @@ EngineOptions normalize_engine_options(EngineOptions options, models::Architectu
         // Ladder taps are realized on prefill chunk boundaries, so the ladder never refines below
         // the chunk: coarser ladders only waste snapshots on taps that share one boundary.
         const std::uint32_t chunk = std::max<std::uint32_t>(options.prefill_chunk, 64U);
+        hybrid.tap_ladder_explicit = hybrid.tap_ladder_tokens.has_value();
+        hybrid.tap_min_gap_explicit = hybrid.tap_min_gap_tokens.has_value();
         hybrid.tap_ladder_tokens =
             hybrid.tap_ladder_tokens.value_or(std::max<std::uint32_t>(4096U, 2U * chunk));
         hybrid.tap_min_gap_tokens =

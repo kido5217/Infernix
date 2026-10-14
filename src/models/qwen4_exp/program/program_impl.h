@@ -1315,8 +1315,8 @@ public:
             }
             // A state cached at the paused frontier itself leaves nothing to replay.
             selection->plan = selection->frontier < r.target
-                                  ? prefix::plan_calls(selection->frontier, r.target, request_chunk_, {},
-                                                       call_cost())
+                                  ? prefix::plan_calls(selection->frontier, r.target, request_chunk_, {}, call_cost(),
+                                                       auto_equal_tail())
                                   : prefix::CallPlan{};
             prefix_pin(*selection);
         }
@@ -1377,7 +1377,7 @@ public:
             lane.reservation = std::move(*reservation);
             tables_->publish(lane.row.handle(), 0, std::span<const DeviceKVPageLease>(lane.pages), device_.stream);
             reset_slot(index);
-            lane.calls = prefix::plan_calls(0, r.target, request_chunk_, {}, call_cost()).ends;
+            lane.calls = prefix::plan_calls(0, r.target, request_chunk_, {}, call_cost(), auto_equal_tail()).ends;
         }
         lane.next_call = 0;
         lane.chunk     = request_chunk_;
@@ -2792,10 +2792,6 @@ private:
                                    0, 4ULL * token_domain_, s));
     }
 
-    std::byte* host_io() const {
-        return io_wide_view_ ? static_cast<std::byte*>(wide_io_.host->data()) : static_cast<std::byte*>(io_host_.data());
-    }
-
     // `count` I32 words of the pinned io at byte offset `offset`.
     std::span<std::int32_t> io_words(std::size_t offset, std::size_t count) const {
         return {reinterpret_cast<std::int32_t*>(host_io() + offset), count};
@@ -2985,6 +2981,10 @@ private:
     // 384 records (a cold cache misses all 512 of a layer) were 9 % slower at pp4096 (design
     // §19.3.8, F2 ring size).
     static constexpr std::int32_t kStreamMinColumns = 256;
+    // The equal-chunk rule's short-tail bound (design §13, #73): a remainder below this stays the
+    // separate short call; at or above it the segment is read in equal widths. Only the auto route
+    // applies the rule (the fixed route keeps its published chunk grid).
+    static constexpr std::uint32_t kEqualTailMin = 1024;
     static constexpr std::uint32_t kStreamHalfMin   = 16;
 
     // The call planner's costs: the fitted call costs, and the walk's spans as walk_span_end forms them.
@@ -3037,7 +3037,16 @@ private:
                                                 .route_log_per_column = prefill_sizing::route_log_bytes_per_column(c_),
                                                 .stream_ring          = prefill_sizing::stream_ring_bytes(c_, residency_->frame_stride()),
                                                 .stream_min_columns   = kStreamMinColumns,
+                                                .walk_residual        = walk_span_residual_bytes(),
+                                                .walk_chunks          = kWalkMaxTokens / kStreamMinColumns,
+                                                .frame_round          = residency_->frame_stride(),
                                                 .fixed                = 4ULL * 256}; // per-buffer alignment slack
+    }
+
+    // One walk span's residual area: every walked token's residual columns (the walk's chunk
+    // slots are priced through the io term, #73 review, Minor 5).
+    std::size_t walk_span_residual_bytes() const {
+        return (static_cast<std::size_t>(width_) * kWalkMaxTokens * 2 + 255) / 256 * 256;
     }
 
     // The chunk this request prefills with (contract (b)): the largest grid chunk the live
@@ -3049,6 +3058,8 @@ private:
         const std::uint32_t fit = prefill_sizing::largest_fitting_chunk(auto_grid_, auto_terms_, budget);
         return fit != 0 ? fit : static_cast<std::uint32_t>(chunk_);
     }
+
+    std::uint32_t auto_equal_tail() const { return auto_ceiling_ != 0 ? kEqualTailMin : 0U; }
 
     // The prompt a lending chunk runs for: the width the loan and its io region are sized at
     // (the resolved chunk; the fixed route never widens the startup arena's columns).
@@ -3070,40 +3081,74 @@ private:
 
     // ---- the active io view ----
     // Every io staging and call address goes through the active view: the static image, or a
-    // wide auto call's region in the loan (set for exactly one call by CallIo below). Decode
+    // wide auto unit's staging (the shared prompt mirror, or a per-unit transient one). Decode
     // and verification rounds always run on the static view.
+    std::byte* host_io() const {
+        if (io_wide_view_) {
+            return io_transient_ ? static_cast<std::byte*>(transient_io_->data())
+                                 : static_cast<std::byte*>(wide_io_.host->data());
+        }
+        return static_cast<std::byte*>(io_host_.data());
+    }
     std::byte* device_io() const noexcept {
-        return io_wide_view_ && wide_io_.device != nullptr ? wide_io_.device : static_cast<std::byte*>(io_device_.p);
+        if (io_wide_view_) {
+            const std::byte* d = io_transient_ ? io_transient_device_ : wide_io_.device;
+            if (d != nullptr) { return const_cast<std::byte*>(d); }
+        }
+        return static_cast<std::byte*>(io_device_.p);
     }
 
-    // Stage one prefill call: with a lending route and a call wider than the static staging,
-    // mirror its io in the prompt's pinned wide region (allocated once per prompt, returned with
-    // the loan); the device part rides in the loan after the ring and the arena.
+    // Stage one prefill unit (a chunk call or a walk span, and a forced-token run): the unit's io
+    // view is decided from the lane's RESOLVED CHUNK — the widest call its plan can hold — so a
+    // span's later, wider calls are covered by the view chosen for its first unit (#73 review,
+    // Important 1). A call wider than the static staging mirrors its io in the loan's wide region:
+    // in the prompt mirror when it covers this lane's chunk, a fresh or replaced mirror when the
+    // growth is allowed, and a per-unit transient mirror when another lane's layer walk holds the
+    // current layout's stride (the documented two-lane transient; #76 exercises it on hardware).
     struct CallIo {
         ProgramImpl& p;
-        explicit CallIo(ProgramImpl& program, const Lane& lane, std::int32_t columns)
+        explicit CallIo(ProgramImpl& program, const Lane& lane, std::int32_t /*width*/)
             : p(program),
-              wide_(program.auto_ceiling_ != 0 &&
-                    columns > program.plan_.columns) {
+              needed_(prefill_sizing::wide_staging_columns(lane.chunk, program.plan_.columns)) {
             p.prompt_loan_columns_ =
                 program.auto_ceiling_ != 0 ? static_cast<std::int32_t>(lane.chunk) : 0;
-            if (!wide_) { return; }
-            if (!p.wide_io_.active()) {
-                p.wide_io_.layout  = io_layout_at(p.c_, static_cast<std::size_t>(lane.chunk), p.plan_.lanes);
-                p.wide_io_.host    = PinnedHostBuffer(p.wide_io_.layout.bytes);
-                p.wide_io_.columns = static_cast<std::int32_t>(lane.chunk);
+            if (needed_ == 0) { return; }
+            const bool replace =
+                prefill_sizing::io_grow_decision(program.wide_io_.active(), program.wide_io_.columns,
+                                                 needed_, program.walk_.active) ==
+                prefill_sizing::IoGrow::Replace;
+            if (!program.wide_io_.active() || replace) {
+                if (replace) { program.device_.synchronize(); } // the old mirror's uploads have run
+                program.wide_io_.layout  = io_layout_at(p.c_, needed_, p.plan_.lanes);
+                program.wide_io_.host    = PinnedHostBuffer(program.wide_io_.layout.bytes);
+                program.wide_io_.columns = needed_;
+                program.wide_io_.device  = nullptr; // enter_wide points it at the current region
+            } else if (program.wide_io_.columns < needed_) {
+                // Transient: the shared mirror serves another lane's walk; this unit stages on its
+                // own copy of the same image (the device part rides the same re-taken region).
+                layout_  = io_layout_at(p.c_, needed_, p.plan_.lanes);
+                p.io_transient_        = true;
+                p.transient_io_        = PinnedHostBuffer(layout_.bytes);
+                p.io_transient_device_ = nullptr;
             }
-            p.io_layout_    = p.wide_io_.layout;
-            p.io_wide_view_ = true;
+            wide_             = true;
+            p.io_layout_      = program.wide_io_.active() && p.wide_io_.columns >= needed_ && !p.io_transient_
+                                    ? program.wide_io_.layout
+                                    : layout_;
+            p.io_wide_view_   = true;
         }
         ~CallIo() {
             if (!wide_) { return; }
-            p.io_layout_    = p.plan_.io;
-            p.io_wide_view_ = false;
+            p.io_layout_      = p.plan_.io;
+            p.io_wide_view_   = false;
+            p.io_transient_   = false;
+            p.transient_io_.reset();
         }
         CallIo(const CallIo&)            = delete;
         CallIo& operator=(const CallIo&) = delete;
         bool wide_ = false;
+        std::int32_t needed_ = 0;
+        IoLayout layout_;
     };
 
     // Whether this chunk streams; lends the ring first when none is held. With `walk_bytes`, the
@@ -3192,7 +3237,9 @@ private:
     // lent for it alone, else (no lendable frames: the VRAM monitor shrank the cache, or there are
     // no frames) in a temporary device allocation, with a warning. The region is
     // [arena | io staging]: the arena's part is sized to the call that swaps it in, the io part
-    // to the lending prompt's chunk (auto mode; design §13, #73).
+    // to the lending prompt's chunk (auto mode; design §13, #73). A held alone-region that is
+    // smaller than this call's region (a second lane's wider resolved chunk: #73 review, Important
+    // 2) is returned and re-taken at the needed size — size-checked, never overrun.
     void enter_wide(std::int32_t columns) {
         const std::int32_t wide  = std::max(columns, prompt_wide_columns());
         const std::size_t region = loan_wide_bytes(wide);
@@ -3201,32 +3248,48 @@ private:
         // A stream lease taken for a narrower prompt (another lane's, or before the VRAM monitor
         // moved the floor) cannot hold this prompt's wider region: it then rides its own lease or
         // allocation instead. The lease returns at the last prompt's end, so this is transient.
-        if (stream_lease_.valid() && wide_region_ != nullptr && stream_wide_bytes_ >= loan_wide_bytes(wide)) {
+        if (stream_lease_.valid() && wide_region_ != nullptr && stream_wide_bytes_ >= region) {
             base         = wide_region_;
             region_arena = stream_wide_arena_;
-        } else if (work_lease_.valid() || wide_fallback_.p != nullptr) {
-            base         = work_region_;
-            region_arena = work_region_arena_;
         } else {
-            const std::uint64_t stride = residency_->frame_stride();
-            const auto frames          = static_cast<std::uint32_t>((region + stride - 1) / stride);
-            if (residency_->frames() > 0 && frames < residency_->lendable()) {
-                const cudaStream_t writers[] = {device_.stream};
-                work_lease_  = residency_->lend(frames, device_.stream, writers);
-                work_region_ = static_cast<std::byte*>(work_lease_.memory.data);
-            } else {
-                diagnostic("the prefill workspace could not be lent from the expert cache; " +
-                               std::to_string(region >> 20) + " MiB are allocated for the prompt" +
-                               (auto_ceiling_ != 0 ? " (a lower --prefill auto ceiling shrinks it)" : ""),
-                           DiagnosticLevel::Warning);
-                wide_fallback_ = DeviceBuffer(region);
-                work_region_   = static_cast<std::byte*>(wide_fallback_.p);
+            if (work_lease_.valid() || wide_fallback_.p != nullptr) {
+                if (work_region_bytes_ >= region) {
+                    base         = work_region_;
+                    region_arena = work_region_arena_;
+                } else { // too small for this call: return it whole and take the needed size.
+                    if (work_lease_.valid()) { residency_->give_back(work_lease_, device_.stream); }
+                    work_lease_ = {};
+                    if (wide_fallback_.p != nullptr) {
+                        device_.synchronize();
+                        wide_fallback_ = DeviceBuffer{};
+                    }
+                }
             }
-            work_region_arena_ = loan_wide_arena(wide);
-            base               = work_region_;
-            region_arena       = work_region_arena_;
+            if (base == nullptr) {
+                const std::uint64_t stride = residency_->frame_stride();
+                const auto frames          = static_cast<std::uint32_t>((region + stride - 1) / stride);
+                if (residency_->frames() > 0 && frames < residency_->lendable()) {
+                    const cudaStream_t writers[] = {device_.stream};
+                    work_lease_  = residency_->lend(frames, device_.stream, writers);
+                    work_region_ = static_cast<std::byte*>(work_lease_.memory.data);
+                } else {
+                    diagnostic("the prefill workspace could not be lent from the expert cache; " +
+                                   std::to_string(region >> 20) + " MiB are allocated for the prompt" +
+                                   (auto_ceiling_ != 0 ? " (a lower --prefill auto ceiling shrinks it)" : ""),
+                               DiagnosticLevel::Warning);
+                    wide_fallback_ = DeviceBuffer(region);
+                    work_region_   = static_cast<std::byte*>(wide_fallback_.p);
+                }
+                work_region_arena_ = loan_wide_arena(wide);
+                work_region_bytes_ = region;
+                base               = work_region_;
+                region_arena       = work_region_arena_;
+            }
         }
-        if (io_wide_view_) { wide_io_.device = base + region_arena; }
+        if (io_wide_view_) {
+            wide_io_.device = base + region_arena;
+            io_transient_device_ = wide_io_.device;
+        }
         wide_arena_ = std::make_unique<WorkspaceArena>(DeviceSpan{base, loan_wide_arena(wide)});
         std::swap(*work_, *wide_arena_);
         wide_active_ = true;
@@ -3254,6 +3317,7 @@ private:
         wide_io_.clear();
         work_region_        = nullptr;
         work_region_arena_  = 0;
+        work_region_bytes_  = 0;
     }
 
     // Returns the ring (after the last streamed chunk is enqueued: compute waited for every copy).
@@ -4428,6 +4492,7 @@ private:
     DeviceBuffer wide_fallback_;                  // the wide region when nothing could be lent
     std::byte* work_region_       = nullptr;      // the alone-lent or fallback region's base
     std::size_t work_region_arena_ = 0;           // its arena's bytes (the io staging follows)
+    std::size_t work_region_bytes_ = 0;           // its whole bytes (the size check for a wider call)
     std::unique_ptr<WorkspaceArena> wide_arena_; // the arena swapped with *work_ around a wide call
     execution::ExpertStream::Stats stream_at_lease_;
     execution::Forward::SplitStats split_at_lease_;
@@ -4454,6 +4519,11 @@ private:
         }
     } wide_io_;
     bool io_wide_view_ = false;                   // io_layout_ and the view bases name the wide region
+    // A transient wide unit (the two-lane width conflict): its own pinned mirror, alive for the
+    // unit; its device part rides the region enter_wide takes (#73 review, Important 2).
+    bool io_transient_ = false;
+    std::optional<PinnedHostBuffer> transient_io_;
+    std::byte* io_transient_device_ = nullptr;
 
     // ---------------------------------------------------------------- layer walk (prefill_walk.cpp)
     // Design §19.3.8 F4: a span of consecutive streamed calls of one prompt runs layer-major (every

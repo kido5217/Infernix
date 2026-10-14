@@ -323,17 +323,18 @@ struct ProgramOptions {
     std::uint32_t max_concurrency = 1;
     std::uint32_t prefill_chunk   = 1024;
     // Which prompt-attention kernel the route runs (EngineOptions::original_int8_prefill_kernel /
-    // original_nvfp4_prefill_kernel): with the fast kernel the auto chunk grid steps in whole
-    // prompt-attention waves (prefill_sizing.h); the original kernels keep the 128-token grid.
+    // original_nvfp4_prefill_kernel): with a fast-kernel KV format the auto chunk grid steps in
+    // whole prompt-attention waves (prefill_sizing.h); the original kernels keep the 128-token grid.
     bool original_int8_prompt_kernel  = false;
     bool original_nvfp4_prompt_kernel = false;
     // `--prefill auto[:N]` (design §13, #73): the ceiling of the per-request lent-chunk search
     // (prefill_sizing.h). Set: every prefill resolves its chunk from the live lendable expert
     // frames; prefill_chunk stays the fallback and the static io staging cap. Unset: fixed chunks.
     std::optional<std::uint32_t> prefill_auto;
-    // `--prefill auto[:N]` (design §13, #73): the ceiling of the per-request lent chunk search
-    // (prefill_sizing.h). Set: every prefill resolves its chunk from the live lendable expert
-    // frames; prefill_chunk stays the fallback and the static io staging cap. Unset: fixed chunks.
+    // Whether the tap planner's ladder/min-gap came from the operator's --cache-tap-* flags
+    // (false) or from the startup defaults (true): only defaults re-anchor on a request's
+    // resolved chunk on the auto route (#73 review, Minor 6).
+    bool prefix_taps_ladder_defaulted = true, prefix_taps_gap_defaulted = true;
     // Main KV capacity in tokens, shared by every lane.
     std::uint32_t kv_capacity_tokens = 0;
     KvCacheStorage kv_cache          = KvCacheStorage::Int8Group64;
