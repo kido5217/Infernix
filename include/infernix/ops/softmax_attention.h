@@ -217,6 +217,15 @@ void causal_softmax_attention_cached(const Tensor& q, const Tensor& positions,
                                      DeviceExecutionView execution);
 
 /**
+ * Return whether the registered prompt-route wave granule exists for this head geometry on any
+ * device. False for a geometry the fast prompt kernel does not implement (for example the Qwen3.8
+ * QSA 24-query/2-KV-head shape at D=256), in which case the caller keeps its own chunk grid and
+ * must not call causal_softmax_attention_prompt_wave_tokens.
+ */
+[[nodiscard]] bool causal_softmax_attention_prompt_wave_supported(
+    AttentionHeadGeometry geometry) noexcept;
+
+/**
  * Return the prompt-route width granule of one registered head geometry on the current device.
  * A single-sequence call whose width is a multiple of the granule launches whole waves of fast
  * prompt-kernel CTAs, so a caller that splits a long prompt into such calls leaves no SM idle behind

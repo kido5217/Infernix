@@ -380,10 +380,6 @@ PrefillProgress ProgramImpl::walk_step(Lane& lane, std::uint32_t index, Clock::t
     expert_stream_->end();
     walk_.active   = false;
     host_lanes_[0] = static_cast<std::int32_t>(index);
-    if (last && !prefilling_besides(index)) {
-        return_stream_lease();
-        return_wide_work();
-    }
     walk_commit_taps(lane);
     prefix_after_prefill_call(lane, index, last);
     if (last && lane.vision) { vision_release(lane); }
@@ -406,7 +402,16 @@ PrefillProgress ProgramImpl::walk_step(Lane& lane, std::uint32_t index, Clock::t
     // prompt they would fill the returned frames with the prompt's experts while the answer's own
     // staged misses land there anyway: 16 per layer and chunk measured slower than none for every
     // answer length (128K + 512 tokens: 23.16 -> 21.10 s; design §19.3.17).
-    return prefill_progress(lane, index, begin, width, tokens, last, 0, start);
+    PrefillProgress out = prefill_progress(lane, index, begin, width, tokens, last, 0, start);
+    // As advance_prefill: the span's last unit samples through the still-live wide io view, so the
+    // prompt's loan returns only after prefill_progress has run (the mirror it stages positions
+    // through is freed by return_wide_work's wide_io_.clear(); returning before the sample left
+    // host_io() a dangling pointer and segfaulted, #76).
+    if (last && !prefilling_besides(index)) {
+        return_stream_lease();
+        return_wide_work();
+    }
+    return out;
 }
 
 void ProgramImpl::walk_abandon() noexcept {
