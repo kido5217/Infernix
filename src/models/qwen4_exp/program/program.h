@@ -322,6 +322,18 @@ struct ProgramOptions {
     std::uint32_t max_context     = 0;
     std::uint32_t max_concurrency = 1;
     std::uint32_t prefill_chunk   = 1024;
+    // Which prompt-attention kernel the route runs (EngineOptions::original_int8_prefill_kernel /
+    // original_nvfp4_prefill_kernel): with the fast kernel the auto chunk grid steps in whole
+    // prompt-attention waves (prefill_sizing.h); the original kernels keep the 128-token grid.
+    bool original_int8_prompt_kernel  = false;
+    bool original_nvfp4_prompt_kernel = false;
+    // `--prefill auto[:N]` (design §13, #73): the ceiling of the per-request lent-chunk search
+    // (prefill_sizing.h). Set: every prefill resolves its chunk from the live lendable expert
+    // frames; prefill_chunk stays the fallback and the static io staging cap. Unset: fixed chunks.
+    std::optional<std::uint32_t> prefill_auto;
+    // `--prefill auto[:N]` (design §13, #73): the ceiling of the per-request lent chunk search
+    // (prefill_sizing.h). Set: every prefill resolves its chunk from the live lendable expert
+    // frames; prefill_chunk stays the fallback and the static io staging cap. Unset: fixed chunks.
     // Main KV capacity in tokens, shared by every lane.
     std::uint32_t kv_capacity_tokens = 0;
     KvCacheStorage kv_cache          = KvCacheStorage::Int8Group64;

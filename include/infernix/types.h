@@ -335,6 +335,12 @@ struct EngineOptions {
     std::uint32_t max_pending_requests = 16;
     std::uint32_t pending_timeout_ms   = 30000;
     std::uint32_t prefill_chunk        = 1024;
+    // Qwen3.8-Flash-Next `--prefill auto[:N]` (design §13): when set (8192, 16384 or 32768), every
+    // prefill resolves its chunk per request as the largest chunk on the sizing grid at or below
+    // this ceiling and at or below max_context whose buffers the expert cache can lend; the fixed
+    // prefill_chunk stays the default, the layout's io staging cap and the fallback when no lease
+    // fits. Other architectures ignore it.
+    std::optional<std::uint32_t> prefill_auto_ceiling;
     // INT8 KV prefills with the fast prompt-attention kernel and rounds prefill_chunk down to whole
     // prompt-attention waves. True selects the original INT8 prompt kernel at the requested chunk;
     // it requires the INT8 KV cache.

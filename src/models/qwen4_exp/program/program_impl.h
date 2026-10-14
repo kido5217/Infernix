@@ -1,6 +1,7 @@
 #pragma once
 
 #include "models/qwen4_exp/program/program.h"
+#include "models/qwen4_exp/program/prefill_sizing.h"
 
 #include "core/arena.h"
 #include "core/cuda_vmm.h"
@@ -23,6 +24,7 @@
 #include "models/qwen4_exp/execution/parameters.h"
 #include "models/qwen4_exp/frontend/ngram_hash.h"
 #include "models/qwen4_exp/memory_plan.h"
+#include "infernix/ops/softmax_attention.h"
 #include "models/qwen4_exp/program/expert_residency.h"
 #include "models/qwen4_exp/program/host_expert_tier.h"
 #include "models/qwen4_exp/program/expert_cache/expert_state.h"
@@ -274,6 +276,14 @@ struct DeviceLayout {
     // while a prompt runs such calls; zero when the static arena covers every call.
     std::size_t wide_work = 0;
     std::int32_t static_columns = 0;
+    // `--prefill auto` (design §13, #73): the ceiling of the per-request lent-chunk search (0: the
+    // fixed-chunk route), and the residency route log's width — sized from that ceiling (the
+    // largest chunk a call may take, bounded by the context), never from the chunk a request
+    // resolves to, so the static tables stay deterministic while calls of every resolved width
+    // find their route log ready. The static io staging keeps its cap at the fallback chunk
+    // (`columns`): a wider call stages its io inside the prefill loan. In the fixed route the
+    // ceiling is zero and the route-log width equals `columns`, so the layout is today's.
+    std::int32_t auto_ceiling = 0, residency_columns = 0;
     // Elastic KV (design §19.3.11): the backing reserves `kv` bytes of address space and maps the
     // chunks pages [0, n) of every plane (and the block tables) need; `kv_base_pages` are mapped at
     // startup and counted as fixed, the rest grows from the expert frames when admissions need it.
@@ -317,6 +327,9 @@ struct ResumeStateImpl {
     // blocks), and the capture the pause published.
     std::vector<std::uint64_t> hashes;
     std::uint64_t capture = 0;
+    // The lane's resolved prefill chunk at the pause (0 before the first bind): replay re-plans
+    // the continuation at the recorded splits with it (design §13, contract (b)).
+    std::uint32_t chunk = 0;
     runtime::BeginSummary begin;
     std::uint64_t prefill_ns = 0, decode_ns = 0, decode_share_ns = 0;
     double vision_seconds = 0;
@@ -349,6 +362,10 @@ public:
         // The prompt's planned prefill calls (design §19.3.1): exclusive ends, the last prompt_tokens.
         std::vector<std::uint32_t> calls;
         std::size_t next_call = 0;
+        // The prefill chunk this request resolved to at admission (design §13): the startup chunk
+        // on the fixed route, the lent one on the auto route; the ledger keeps it so replay and a
+        // prompt-boundary resume re-split at the recorded points.
+        std::uint32_t chunk = 0;
         LaneRope rope;                    // RoPE positions of the lane's tokens (design §19.3.2)
         std::unique_ptr<LaneVision> vision; // the encode window and handoff of a media prompt
         double vision_seconds = 0;          // the tower's GPU time
@@ -412,9 +429,15 @@ public:
         d.mtp           = config.mtp;
         d.head_rows     = config.proposal_rows != 0 ? dim(config.proposal_rows) : dim(c.vocab_size);
         d.chunk         = static_cast<std::int32_t>(std::min(o.prefill_chunk, o.max_context));
+        // The lent-chunk ceiling (design §13): the operator's grid value cut to the context; the
+        // fixed fallback chunk can never exceed it (every call stays within the tables that price it).
+        d.auto_ceiling =
+            o.prefill_auto ? static_cast<std::int32_t>(std::min(*o.prefill_auto, o.max_context)) : 0;
+        if (d.auto_ceiling != 0 && d.chunk > d.auto_ceiling) { d.chunk = d.auto_ceiling; }
         d.mtp_k         = d.mtp ? static_cast<std::int32_t>(o.mtp_draft_tokens) : 0;
         d.max_width     = 1 + std::max(static_cast<std::int32_t>(o.ngram_draft_tokens), d.mtp_k);
         d.columns       = std::max(d.chunk, d.lanes * d.max_width);
+        d.residency_columns = std::max(d.auto_ceiling != 0 ? d.auto_ceiling : d.chunk, d.lanes * d.max_width);
         d.pages_per_row = (dim(o.max_context) + kPagedKVPageSize - 1) / kPagedKVPageSize;
         const auto kv_tokens = o.kv_capacity_tokens != 0 ? o.kv_capacity_tokens : o.max_context * o.max_concurrency;
         d.kv_pages      = (kv_tokens + kPagedKVPageSize - 1) / kPagedKVPageSize;
@@ -453,28 +476,11 @@ public:
         d.kv_elastic = d.pool.spec.geometry.device_plane_order == PagedKVPlaneOrder::PageMajor;
         d.kv_base_pages = std::min<std::uint32_t>(d.kv_pages, kKvBaseTokens / kPagedKVPageSize);
 
-        // Per-call inputs, logits and sampling counts.
-        const std::size_t heads     = NgramHash(c.ple.ngram, 0).heads();
-        const std::size_t row_bytes = c.ple.table.row_bytes;
-        const std::size_t columns   = static_cast<std::size_t>(d.columns);
-        const std::size_t mtp_subchunks = (columns + 1 + execution::kMtpChunkColumns - 1) / execution::kMtpChunkColumns;
-        d.io.ids            = 0;
-        d.io.positions      = align(d.io.ids + 4ULL * columns);
-        d.io.rope           = align(d.io.positions + 4ULL * columns);
-        d.io.block_rope     = align(d.io.rope + 12ULL * columns);
-        d.io.slots          = align(d.io.block_rope + 12ULL * lanes);
-        d.io.rows           = align(d.io.slots + 4ULL * lanes);
-        d.io.columns        = align(d.io.rows + 4ULL * lanes);
-        d.io.gate           = align(d.io.columns + 4ULL * columns);
-        d.io.ngram          = align(d.io.gate + 4);
-        d.io.mtp_ids        = align(d.io.ngram + row_bytes * heads * columns);
-        d.io.mtp_cells      = align(d.io.mtp_ids + 4ULL * (columns + 1));
-        d.io.mtp_rope       = align(d.io.mtp_cells + 4ULL * (columns + 1));
-        d.io.mtp_block_rope = align(d.io.mtp_rope + 12ULL * (columns + 1));
-        d.io.vision_columns     = align(d.io.mtp_block_rope + 12ULL * mtp_subchunks);
-        d.io.mtp_vision_columns = align(d.io.vision_columns + 4ULL * columns);
-        d.io.bytes              = align(d.io.mtp_vision_columns + 4ULL * (columns + 1));
-        if (d.io.block_rope + 12ULL * lanes > d.io.ngram || d.io.columns + 4ULL * columns > d.io.ngram) {
+        // Per-call inputs, logits and sampling counts. The io block is shared with the wide calls'
+        // staging regions (io_layout_at): the static one is capped at the fallback chunk's columns.
+        const std::size_t columns = static_cast<std::size_t>(d.columns);
+        d.io = io_layout_at(c, columns, d.lanes);
+        if (d.io.block_rope + 12ULL * d.lanes > d.io.ngram || d.io.columns + 4ULL * columns > d.io.ngram) {
             throw std::logic_error("Qwen4Exp: decode io must precede the n-gram rows");
         }
         d.logits32     = sizeof(float) * c.vocab_size * lanes * W;
@@ -483,10 +489,13 @@ public:
 
         // The workspace arena (the forward pass, sampling, draft acceptance and the drafter) covers
         // decode, verification and calls of up to kStaticWorkColumns columns; a wider prefill call
-        // swaps in an arena of the chunk's size lent from expert frames (design §19.3.7, VRAM item 1).
+        // swaps in an arena of the call's size lent from expert frames (design §19.3.7, VRAM item 1).
+        // With --prefill auto the plan prices the widest call the ceiling allows (design §13); the
+        // loan a prompt actually takes is the resolved chunk's price (prefill_sizing.h).
         d.static_columns = std::max(lanes * W, std::min(d.chunk, kStaticWorkColumns));
         d.work           = workspace_bytes(c, o, d, lanes, d.static_columns);
-        d.wide_work      = d.chunk > d.static_columns ? workspace_bytes(c, o, d, lanes, d.chunk) : 0;
+        const std::int32_t widest_call = std::max(d.chunk, d.auto_ceiling);
+        d.wide_work      = widest_call > d.static_columns ? workspace_bytes(c, o, d, lanes, widest_call) : 0;
 
         // Verification (W > 1): GDN replay records, PLE and QSA records, the round's I32 arrays.
         if (W > 1) {
@@ -557,7 +566,7 @@ public:
                sizeof(ops::SamplingConfig) * lanes + d.token_counts + 4ULL * d.spec.words + d.mtp_ones +
                4ULL * d.mtp_io.words + kGateStatsBytes * lanes + constraint_bytes(lanes, W) +
                grammar_mask_bytes(d.token_domain, lanes, W);
-        b.residency            = ExpertResidency::table_bytes(c, d.columns);
+        b.residency            = ExpertResidency::table_bytes(c, d.residency_columns);
         b.expert_record_stride = d.record_stride;
         b.max_frames           = ExpertResidency::max_frames(c);
         b.graph_bound          = graph_bound(o.max_concurrency, static_cast<std::uint32_t>(W),
@@ -604,6 +613,33 @@ public:
         return bytes;
     }
 
+    // The io image of a call of `columns` columns over `lanes` sequences: every per-call array and
+    // its offsets. The static image is capped at the layout's columns; an auto-mode call wider
+    // than that stages into a region of this layout inside the prompt's loan (design §13, #73).
+    [[nodiscard]] static IoLayout io_layout_at(const TextConfig& c, std::size_t columns, std::int32_t lanes) {
+        const std::size_t heads         = NgramHash(c.ple.ngram, 0).heads();
+        const std::size_t row_bytes     = c.ple.table.row_bytes;
+        const std::size_t mtp_subchunks = (columns + 1 + execution::kMtpChunkColumns - 1) / execution::kMtpChunkColumns;
+        IoLayout io;
+        io.ids            = 0;
+        io.positions      = align(io.ids + 4ULL * columns);
+        io.rope           = align(io.positions + 4ULL * columns);
+        io.block_rope     = align(io.rope + 12ULL * columns);
+        io.slots          = align(io.block_rope + 12ULL * lanes);
+        io.rows           = align(io.slots + 4ULL * lanes);
+        io.columns        = align(io.rows + 4ULL * lanes);
+        io.gate           = align(io.columns + 4ULL * columns);
+        io.ngram          = align(io.gate + 4);
+        io.mtp_ids        = align(io.ngram + row_bytes * heads * columns);
+        io.mtp_cells      = align(io.mtp_ids + 4ULL * (columns + 1));
+        io.mtp_rope       = align(io.mtp_cells + 4ULL * (columns + 1));
+        io.mtp_block_rope = align(io.mtp_rope + 12ULL * (columns + 1));
+        io.vision_columns     = align(io.mtp_block_rope + 12ULL * mtp_subchunks);
+        io.mtp_vision_columns = align(io.vision_columns + 4ULL * columns);
+        io.bytes              = align(io.mtp_vision_columns + 4ULL * (columns + 1));
+        return io;
+    }
+
     static void allocate(DeviceBuffer& buffer, std::size_t bytes, std::uint64_t& tally) {
         buffer = DeviceBuffer(bytes);
         tally += bytes;
@@ -613,7 +649,8 @@ public:
     static std::string spill_message(std::uint64_t bytes) {
         return std::to_string(bytes >> 20) +
                " MiB of Infernix's VRAM allocations were placed in shared system memory by the driver's sysmem "
-               "fallback: free VRAM, or lower --max-context, --max-concurrency or --prefill-chunk. Setting the NVIDIA "
+               "fallback: free VRAM, or lower --max-context, --max-concurrency or --prefill-chunk (a --prefill auto "
+               "route caps its lent chunks with --prefill auto:N). Setting the NVIDIA "
                "Control Panel 'CUDA - Sysmem Fallback Policy' to 'Prefer No Sysmem Fallback' for this program makes "
                "this fail at allocation instead.";
     }
@@ -631,6 +668,8 @@ public:
         vocab_         = dim(c_.vocab_size);
         token_domain_  = plan_.token_domain;
         chunk_         = plan_.chunk;
+        auto_ceiling_  = plan_.auto_ceiling;
+        request_chunk_ = plan_.chunk;
         mtp_k_         = plan_.mtp_k;
         max_width_     = plan_.max_width;
         columns_       = plan_.columns;
@@ -761,7 +800,9 @@ public:
         experts.staging_base  = static_cast<std::uint8_t*>(staging_.p);
         experts.staging_slots = kStagingSlots;
         // The expert cache's tables and route log; its frames come last (below).
-        residency_ = std::make_unique<ExpertResidency>(c_, std::move(banks), record_stride, columns_, device_.device);
+        residency_ = std::make_unique<ExpertResidency>(c_, std::move(banks), record_stride, plan_.residency_columns,
+                                                       device_.device);
+        if (auto_ceiling_ != 0) { init_auto_sizing(); }
         allocated += plan_.bytes.residency;
         if (allocated != plan_.bytes.fixed_bytes()) {
             throw std::logic_error("Qwen4Exp: the Program's device allocations differ from its device plan");
@@ -800,7 +841,12 @@ public:
             tier.fetch     = fetch_channel_.get();
             // A layer walk's step calls ceil(layers / n) layers once per chunk of its n-chunk span (one
             // tier round per step): at most layers + n - 1 layer calls.
-            tier.layer_calls = store->layers() + kWalkMaxTokens / static_cast<std::uint32_t>(std::max(chunk_, 1)) + 1U;
+            // A lending prompt's spans hold up to kWalkMaxTokens / kStreamMinColumns walk chunks
+            // (the narrowest call a span takes); a fixed route has one chunk (design §13, #73).
+            tier.layer_calls = store->layers() + kWalkMaxTokens /
+                                                     static_cast<std::uint32_t>(auto_ceiling_ != 0 ? kStreamMinColumns
+                                                                                                   : std::max(chunk_, 1)) +
+                                                     1U;
             tier_          = std::make_unique<HostExpertTier>(*store, std::move(tier));
             residency_->attach_tier(tier_.get());
         }
@@ -924,7 +970,7 @@ public:
                                 .experts            = c_.moe.experts,
                                 .top_k              = c_.moe.top_k,
                                 .frames             = residency_->frames(),
-                                .max_columns        = static_cast<std::uint32_t>(columns_),
+                                .max_columns        = static_cast<std::uint32_t>(plan_.residency_columns),
                                 .lanes              = options_.max_concurrency,
                                 .max_width          = static_cast<std::uint32_t>(max_width_),
                                 .mtp_draft_tokens   = static_cast<std::uint32_t>(mtp_k_),
@@ -1028,6 +1074,9 @@ public:
     std::vector<SourceCandidate> hybrid_sources(const RequestBasePlan& base, std::uint32_t maximum_frontier) {
         const BasePlanImpl& b = *base.impl_;
         const auto& data      = qwen3_5::PreparedPromptAccess::view(*b.prompt);
+        // The quote's plan and cost use this request's resolved chunk; the binding re-resolves it
+        // from the then-live frames (the plan re-forms there).
+        request_chunk_        = resolve_chunk();
         std::vector<SourceCandidate> out;
         if (prefix_) {
             std::optional<PrefixSelection> chosen = prefix_select(data, b, kNoLane);
@@ -1053,6 +1102,11 @@ public:
         if (source.hybrid == nullptr) { throw std::logic_error("Qwen4Exp: a binding source carries no quote"); }
         if (resume != nullptr && resume->impl_ == nullptr) { throw std::logic_error("Qwen4Exp: a resume carries no state"); }
         const QuoteImpl& q = *source.hybrid;
+        // Resolve this request's prefill chunk (design §13): live lendable frames fund it; the
+        // recorded chunk of a resumed request replays it at its own split points (contract (b)).
+        request_chunk_ = resume != nullptr && resume->impl_->chunk != 0
+                             ? resume->impl_->chunk
+                             : resolve_chunk();
         const std::uint32_t index = destination.value;
         if (index >= options_.max_concurrency || lanes_[index].phase != Phase::Free || in_transaction()) {
             throw std::logic_error("Qwen4Exp: the binding destination is not free");
@@ -1143,6 +1197,7 @@ public:
             lane.calls = plan_prefill(data, 0, {}, false).ends;
         }
         lane.next_call = 0;
+        lane.chunk     = request_chunk_;
         lane.mtp_accept.fill(kAcceptancePrior);
         lane.mtp_policy_rounds = 0;
         if (max_width_ > 1) {
@@ -1210,6 +1265,7 @@ public:
         r.cpu_served_at_admission = lane.cpu_served_at_admission;
         r.ngram                   = lane.ngram;
         r.gate                    = lane.gate;
+        r.chunk                   = lane.chunk;
     }
 
     void restore_request(Lane& lane, const ResumeStateImpl& r) {
@@ -1226,6 +1282,7 @@ public:
         lane.cpu_served_at_admission = r.cpu_served_at_admission;
         lane.ngram                   = r.ngram;
         lane.gate                    = r.gate;
+        lane.chunk                   = r.chunk;
     }
 
     // The resumed request's ledger as a prompt: its tokens through the next input, their RoPE
@@ -1240,6 +1297,9 @@ public:
     runtime::ResourceReservation bind_replay(const BasePlanImpl& b, std::uint32_t index, ResumeStateImpl& r) {
         Lane& lane = lanes_[index];
         kv_busy();
+        // The ledger's recorded chunk: the replay re-splits at the points the ledger recorded
+        // (contract (b)); a pause before any binding replayed at the startup chunk.
+        request_chunk_ = r.chunk != 0 ? r.chunk : static_cast<std::uint32_t>(chunk_);
         const auto& prompt = qwen3_5::PreparedPromptAccess::view(*b.prompt);
         const qwen3_5::PreparedPromptData ledger = ledger_prompt(prompt, r);
         const std::uint32_t pages = binding_pages(b, r.target + 1U);
@@ -1255,7 +1315,7 @@ public:
             }
             // A state cached at the paused frontier itself leaves nothing to replay.
             selection->plan = selection->frontier < r.target
-                                  ? prefix::plan_calls(selection->frontier, r.target, static_cast<std::uint32_t>(chunk_), {},
+                                  ? prefix::plan_calls(selection->frontier, r.target, request_chunk_, {},
                                                        call_cost())
                                   : prefix::CallPlan{};
             prefix_pin(*selection);
@@ -1317,9 +1377,10 @@ public:
             lane.reservation = std::move(*reservation);
             tables_->publish(lane.row.handle(), 0, std::span<const DeviceKVPageLease>(lane.pages), device_.stream);
             reset_slot(index);
-            lane.calls = prefix::plan_calls(0, r.target, static_cast<std::uint32_t>(chunk_), {}, call_cost()).ends;
+            lane.calls = prefix::plan_calls(0, r.target, request_chunk_, {}, call_cost()).ends;
         }
         lane.next_call = 0;
+        lane.chunk     = request_chunk_;
         if (max_width_ > 1 && options_.ngram_draft_tokens > 0) {
             lane.proposer = std::make_unique<qwen3_5::detail::NgramProposer>(proposer_tokens_, proposer_tokens_ / 2);
             for (const auto token : lane.history) { lane.proposer->append(token); }
@@ -1536,10 +1597,6 @@ public:
         const auto index  = lane_of(sequence);
         Lane& lane        = lanes_[index];
         if (lane.phase != Phase::Prefill) { throw std::logic_error("Qwen4Exp: prefill on a lane that is not prefilling"); }
-        if (walk_.active) {
-            if (walk_.lane != index) { throw std::logic_error("Qwen4Exp: another lane's prefill holds the layer walk"); }
-            return walk_step(lane, index, start);
-        }
         const std::int32_t begin = static_cast<std::int32_t>(lane.state_tokens);
         if (lane.next_call >= lane.calls.size() || lane.calls[lane.next_call] <= lane.state_tokens) {
             throw std::logic_error(
@@ -1547,6 +1604,15 @@ public:
                 ", call " + std::to_string(lane.next_call) + " of " + std::to_string(lane.calls.size()) +
                 (lane.next_call < lane.calls.size() ? ", ending at " + std::to_string(lane.calls[lane.next_call]) : "") +
                 ", state " + std::to_string(lane.state_tokens) + ", prompt end " + std::to_string(lane.prefill_end) + ")");
+        }
+        // An auto call (or walk chunk) wider than the static io staging mirrors it in the loan's
+        // wide region for the call's duration; the view's layout is the prompt's resolved chunk
+        // (design §13, #73). Active for the whole unit, including the walk's span decision.
+        const std::int32_t first_width = static_cast<std::int32_t>(lane.calls[lane.next_call] - lane.state_tokens);
+        const CallIo io(*this, lane, first_width);
+        if (walk_.active) {
+            if (walk_.lane != index) { throw std::logic_error("Qwen4Exp: another lane's prefill holds the layer walk"); }
+            return walk_step(lane, index, start);
         }
         if (const std::size_t end = walk_span_end(lane, index); end > lane.next_call) {
             walk_begin(lane, index, end);
@@ -1815,6 +1881,7 @@ public:
                 for (const auto token : forced) { lane.proposer->append(token); }
             }
             const auto begin = static_cast<std::int32_t>(lane.state_tokens);
+            const CallIo io(*this, lane, static_cast<std::int32_t>(stride));
             stage_sequence(index, begin, static_cast<std::int32_t>(stride), lane.history);
             const auto chunk = stage_mtp_chunk(lane, index, begin, static_cast<std::int32_t>(stride));
             run(1, static_cast<std::int32_t>(stride), 1, chunk ? &*chunk : nullptr);
@@ -2725,7 +2792,9 @@ private:
                                    0, 4ULL * token_domain_, s));
     }
 
-    std::byte* host_io() const { return static_cast<std::byte*>(io_host_.data()); }
+    std::byte* host_io() const {
+        return io_wide_view_ ? static_cast<std::byte*>(wide_io_.host->data()) : static_cast<std::byte*>(io_host_.data());
+    }
 
     // `count` I32 words of the pinned io at byte offset `offset`.
     std::span<std::int32_t> io_words(std::size_t offset, std::size_t count) const {
@@ -2891,14 +2960,16 @@ private:
              const execution::MtpChunk* chunk = nullptr, const execution::VisionInput* vision = nullptr,
              bool streamed = false) {
         const cudaStream_t s = device_.stream;
-        CUDA_CHECK(cudaMemcpyAsync(io_device_.p, io_host_.data(), io_layout_.bytes, cudaMemcpyHostToDevice, s));
+        // The wide arena and the wide call's io region are chosen before the upload: a call wider
+        // than the static staging reads and writes the loan's io region (auto mode, #73).
+        const WideWork wide(*this, batch * width);
+        CUDA_CHECK(cudaMemcpyAsync(device_io(), host_io(), io_layout_.bytes, cudaMemcpyHostToDevice, s));
         if (cpu_service_) { cpu_service_->wake(); } // its first request comes within this call
         residency_->before_round(s);
         // The ring's copies queue on the copy engine behind the io upload above. A call the CPU can
         // share (design §19.3.12) gates the stream on each layer's routing.
         split_call_ = streamed && split_policy_ && batch * width <= split_columns();
         if (streamed) { expert_stream_->begin(ring_span(), residency_->host_table(), s, split_call_); }
-        const WideWork wide(*this, batch * width);
         forward_call(batch, width, logit_columns, nullptr, chunk, vision, nullptr, streamed);
         if (streamed) { expert_stream_->end(); }
         split_call_ = false;
@@ -2924,6 +2995,117 @@ private:
                                 .walk_max_tokens  = kWalkMaxTokens};
     }
 
+    // ---- --prefill auto: per-request lent chunk sizing (design §13, ticket #73) ----
+    // The grid is the 128-token chunk step (whole prompt-attention waves where the fast INT8-KV
+    // prompt kernel runs); the price is the plan's own parametric buffer terms (prefill_sizing.h);
+    // the budget is the live lendable frames — the quarter floor Vision already keeps is inside
+    // lendable(), and re-admission stays lazy (no eager refill-back: contract (c)). The resolved
+    // chunk rides on the lane and the ledger, so replay re-splits at the recorded points.
+
+    // The arena term of the loan price: the plan's workspace_bytes at the probed width.
+    static std::uint64_t arena_price(void* context, std::uint32_t columns) {
+        return static_cast<const ProgramImpl*>(context)->workspace_at(static_cast<std::int32_t>(columns));
+    }
+
+    std::size_t workspace_at(std::int32_t columns) const {
+        DeviceLayout d = plan_; // the mtp term follows the call's width through d.chunk
+        d.chunk        = columns;
+        return workspace_bytes(c_, options_, d, plan_.lanes, columns);
+    }
+
+    void init_auto_sizing() {
+        std::uint32_t step = 128;
+        // The fast prompt kernels launch whole prompt-attention waves per call; their grid is whole
+        // waves (896 tokens for the 24-head model on the RTX 5090). BF16 KV and the original INT8
+        // and NVFP4 prompt kernels keep the plain 128-token chunk grid.
+        const auto kv = options_.kv_cache;
+        const bool fast_prompt_kernel =
+            kv != KvCacheStorage::BFloat16 &&
+            !(kv == KvCacheStorage::Int8Group64 && options_.original_int8_prompt_kernel) &&
+            !(kv == KvCacheStorage::Nvfp4Group16 && options_.original_nvfp4_prompt_kernel);
+        if (fast_prompt_kernel) {
+            const auto wave = static_cast<std::uint32_t>(ops::causal_softmax_attention_prompt_wave_tokens(
+                {dim(c_.attention.head_dim), dim(c_.attention.heads), dim(c_.attention.kv_heads)}));
+            if (wave >= step) { step = wave; }
+        }
+        auto_grid_   = prefill_sizing::ChunkGrid{.step    = step,
+                                                .ceiling = static_cast<std::uint32_t>(
+                                                    std::min(auto_ceiling_, static_cast<std::int32_t>(options_.max_context)))};
+        auto_terms_  = prefill_sizing::LoanTerms{.arena                = &arena_price,
+                                                .arena_context        = this,
+                                                .io_per_column        = prefill_sizing::io_bytes_per_column(c_),
+                                                .route_log_per_column = prefill_sizing::route_log_bytes_per_column(c_),
+                                                .stream_ring          = prefill_sizing::stream_ring_bytes(c_, residency_->frame_stride()),
+                                                .stream_min_columns   = kStreamMinColumns,
+                                                .fixed                = 4ULL * 256}; // per-buffer alignment slack
+    }
+
+    // The chunk this request prefills with (contract (b)): the largest grid chunk the live
+    // lendable frames fund, or the fixed chunk — the default, and the fallback when no lease fits.
+    std::uint32_t resolve_chunk() {
+        if (auto_ceiling_ == 0) { return static_cast<std::uint32_t>(chunk_); }
+        const std::uint64_t budget =
+            static_cast<std::uint64_t>(residency_->lendable()) * residency_->frame_stride();
+        const std::uint32_t fit = prefill_sizing::largest_fitting_chunk(auto_grid_, auto_terms_, budget);
+        return fit != 0 ? fit : static_cast<std::uint32_t>(chunk_);
+    }
+
+    // The prompt a lending chunk runs for: the width the loan and its io region are sized at
+    // (the resolved chunk; the fixed route never widens the startup arena's columns).
+    std::int32_t prompt_wide_columns() const {
+        return prompt_loan_columns_ != 0 ? prompt_loan_columns_ : chunk_;
+    }
+
+    // Bytes a wide call lends beyond the ring: the fixed route's one startup arena; the auto
+    // route's arena and io staging at the lending prompt's resolved width (the staging region
+    // follows the chunk; the residency route log is static at the ceiling).
+    std::size_t loan_wide_bytes(std::int32_t columns) const {
+        if (auto_ceiling_ == 0 || columns <= plan_.columns) { return wide_work_; }
+        return workspace_at(columns) + io_layout_at(c_, static_cast<std::size_t>(columns), plan_.lanes).bytes;
+    }
+    // The arena's part of the loan's wide region (what enter_wide swaps in).
+    std::size_t loan_wide_arena(std::int32_t columns) const {
+        return auto_ceiling_ == 0 || columns <= plan_.columns ? wide_work_ : workspace_at(columns);
+    }
+
+    // ---- the active io view ----
+    // Every io staging and call address goes through the active view: the static image, or a
+    // wide auto call's region in the loan (set for exactly one call by CallIo below). Decode
+    // and verification rounds always run on the static view.
+    std::byte* device_io() const noexcept {
+        return io_wide_view_ && wide_io_.device != nullptr ? wide_io_.device : static_cast<std::byte*>(io_device_.p);
+    }
+
+    // Stage one prefill call: with a lending route and a call wider than the static staging,
+    // mirror its io in the prompt's pinned wide region (allocated once per prompt, returned with
+    // the loan); the device part rides in the loan after the ring and the arena.
+    struct CallIo {
+        ProgramImpl& p;
+        explicit CallIo(ProgramImpl& program, const Lane& lane, std::int32_t columns)
+            : p(program),
+              wide_(program.auto_ceiling_ != 0 &&
+                    columns > program.plan_.columns) {
+            p.prompt_loan_columns_ =
+                program.auto_ceiling_ != 0 ? static_cast<std::int32_t>(lane.chunk) : 0;
+            if (!wide_) { return; }
+            if (!p.wide_io_.active()) {
+                p.wide_io_.layout  = io_layout_at(p.c_, static_cast<std::size_t>(lane.chunk), p.plan_.lanes);
+                p.wide_io_.host    = PinnedHostBuffer(p.wide_io_.layout.bytes);
+                p.wide_io_.columns = static_cast<std::int32_t>(lane.chunk);
+            }
+            p.io_layout_    = p.wide_io_.layout;
+            p.io_wide_view_ = true;
+        }
+        ~CallIo() {
+            if (!wide_) { return; }
+            p.io_layout_    = p.plan_.io;
+            p.io_wide_view_ = false;
+        }
+        CallIo(const CallIo&)            = delete;
+        CallIo& operator=(const CallIo&) = delete;
+        bool wide_ = false;
+    };
+
     // Whether this chunk streams; lends the ring first when none is held. With `walk_bytes`, the
     // lease also holds a layer walk's area after the ring (stream_walk_bytes_; zero when the
     // lendable frames do not cover it): the experts its frames evict widen each half by their
@@ -2944,8 +3126,10 @@ private:
                 return static_cast<std::uint32_t>((bytes + stride - 1) / stride);
             };
             // The wide arena rides in the lease whenever the plan has one: a prompt with a streamed
-            // call runs wide calls.
-            const std::uint32_t wide_frames = frames_of(wide_work_);
+            // call runs wide calls. With --prefill auto the region is the prompt's own: arena and io
+            // staging at the resolved chunk (design §13); the ring's cap — what the lease leaves —
+            // therefore scales with the resolved chunk too.
+            const std::uint32_t wide_frames = frames_of(loan_wide_bytes(prompt_wide_columns()));
             const auto walk_frames          = frames_of(walk_bytes);
             const std::uint32_t lendable    = residency_->lendable();
             if (wide_frames >= lendable) { return false; }
@@ -2963,6 +3147,9 @@ private:
             stream_ring_bytes_ = static_cast<std::size_t>(ring) * stride;
             stream_wide_bytes_ = static_cast<std::size_t>(wide_frames) * stride;
             stream_walk_bytes_ = walk ? static_cast<std::size_t>(walk_frames) * stride : 0;
+            stream_wide_arena_ = loan_wide_arena(prompt_wide_columns());
+            wide_region_       = static_cast<std::byte*>(stream_lease_.memory.data) + stream_ring_bytes_;
+            if (io_wide_view_) { wide_io_.device = wide_region_ + stream_wide_arena_; }
             stream_at_lease_   = expert_stream_->stats();
             split_at_lease_    = forward_->split_stats();
             prefetched_at_lease_ = walk_prefetched_chunks_;
@@ -2985,8 +3172,8 @@ private:
     class WideWork {
     public:
         WideWork(ProgramImpl& program, std::int32_t columns) : program_(program) {
-            if (columns > program.plan_.static_columns && program.wide_work_ > 0) {
-                program.enter_wide();
+            if (columns > program.plan_.static_columns && (program.wide_work_ > 0 || program.auto_ceiling_ != 0)) {
+                program.enter_wide(columns);
                 active_ = true;
             }
         }
@@ -3001,28 +3188,46 @@ private:
         bool active_ = false;
     };
 
-    void enter_wide() {
-        DeviceSpan span{};
-        if (stream_lease_.valid() && stream_wide_bytes_ >= wide_work_) {
-            span = {static_cast<std::byte*>(stream_lease_.memory.data) + stream_ring_bytes_, wide_work_};
+    // The wide region rides in the stream lease when one has it and is big enough, else in frames
+    // lent for it alone, else (no lendable frames: the VRAM monitor shrank the cache, or there are
+    // no frames) in a temporary device allocation, with a warning. The region is
+    // [arena | io staging]: the arena's part is sized to the call that swaps it in, the io part
+    // to the lending prompt's chunk (auto mode; design §13, #73).
+    void enter_wide(std::int32_t columns) {
+        const std::int32_t wide  = std::max(columns, prompt_wide_columns());
+        const std::size_t region = loan_wide_bytes(wide);
+        std::byte* base          = nullptr;
+        std::size_t region_arena = 0;
+        // A stream lease taken for a narrower prompt (another lane's, or before the VRAM monitor
+        // moved the floor) cannot hold this prompt's wider region: it then rides its own lease or
+        // allocation instead. The lease returns at the last prompt's end, so this is transient.
+        if (stream_lease_.valid() && wide_region_ != nullptr && stream_wide_bytes_ >= loan_wide_bytes(wide)) {
+            base         = wide_region_;
+            region_arena = stream_wide_arena_;
+        } else if (work_lease_.valid() || wide_fallback_.p != nullptr) {
+            base         = work_region_;
+            region_arena = work_region_arena_;
         } else {
-            if (!work_lease_.valid() && wide_fallback_.p == nullptr) {
-                const std::uint64_t stride = residency_->frame_stride();
-                const auto frames          = static_cast<std::uint32_t>((wide_work_ + stride - 1) / stride);
-                if (residency_->frames() > 0 && frames < residency_->lendable()) {
-                    const cudaStream_t writers[] = {device_.stream};
-                    work_lease_ = residency_->lend(frames, device_.stream, writers);
-                } else {
-                    diagnostic("the prefill workspace could not be lent from the expert cache; " +
-                                   std::to_string(wide_work_ >> 20) + " MiB are allocated for the prompt",
-                               DiagnosticLevel::Warning);
-                    wide_fallback_ = DeviceBuffer(wide_work_);
-                }
+            const std::uint64_t stride = residency_->frame_stride();
+            const auto frames          = static_cast<std::uint32_t>((region + stride - 1) / stride);
+            if (residency_->frames() > 0 && frames < residency_->lendable()) {
+                const cudaStream_t writers[] = {device_.stream};
+                work_lease_  = residency_->lend(frames, device_.stream, writers);
+                work_region_ = static_cast<std::byte*>(work_lease_.memory.data);
+            } else {
+                diagnostic("the prefill workspace could not be lent from the expert cache; " +
+                               std::to_string(region >> 20) + " MiB are allocated for the prompt" +
+                               (auto_ceiling_ != 0 ? " (a lower --prefill auto ceiling shrinks it)" : ""),
+                           DiagnosticLevel::Warning);
+                wide_fallback_ = DeviceBuffer(region);
+                work_region_   = static_cast<std::byte*>(wide_fallback_.p);
             }
-            span = work_lease_.valid() ? DeviceSpan{work_lease_.memory.data, wide_work_}
-                                       : DeviceSpan{wide_fallback_.p, wide_work_};
+            work_region_arena_ = loan_wide_arena(wide);
+            base               = work_region_;
+            region_arena       = work_region_arena_;
         }
-        wide_arena_ = std::make_unique<WorkspaceArena>(span);
+        if (io_wide_view_) { wide_io_.device = base + region_arena; }
+        wide_arena_ = std::make_unique<WorkspaceArena>(DeviceSpan{base, loan_wide_arena(wide)});
         std::swap(*work_, *wide_arena_);
         wide_active_ = true;
     }
@@ -3038,10 +3243,17 @@ private:
     void return_wide_work() {
         if (work_lease_.valid()) { residency_->give_back(work_lease_, device_.stream); }
         work_lease_ = {};
-        if (wide_fallback_.p != nullptr) {
+        const bool had_fallback = wide_fallback_.p != nullptr;
+        if (had_fallback) {
             device_.synchronize();
             wide_fallback_ = DeviceBuffer{};
         }
+        // The prompt's wide io: its device part rode in the loan returned above; the pinned
+        // mirror goes with it, once its uploads and gate copies have run.
+        if (wide_io_.active() && !had_fallback) { device_.synchronize(); }
+        wide_io_.clear();
+        work_region_        = nullptr;
+        work_region_arena_  = 0;
     }
 
     // Returns the ring (after the last streamed chunk is enqueued: compute waited for every copy).
@@ -3052,6 +3264,9 @@ private:
         stream_lease_         = {};
         stream_ring_bytes_    = 0;
         stream_wide_bytes_    = 0;
+        stream_wide_arena_    = 0;
+        wide_region_          = nullptr;
+        wide_io_.device       = nullptr;
         stream_walk_bytes_    = 0;
         const auto& now       = expert_stream_->stats();
         const auto streamed   = now.streamed - stream_at_lease_.streamed;
@@ -3163,7 +3378,7 @@ private:
                       const execution::VisionInput* vision = nullptr, const execution::NgramRowGate* gate = nullptr,
                       bool streamed = false) {
         require_tier_round();
-        execution::ForwardBatch fb = io_batch(static_cast<std::byte*>(io_device_.p), batch, width, logit_columns);
+        execution::ForwardBatch fb = io_batch(device_io(), io_layout_, batch, width, logit_columns);
         fb.ngram_gate    = gate;
         fb.verify        = verify;
         fb.mtp_chunk     = chunk;
@@ -3180,19 +3395,20 @@ private:
     }
 
     // A call's inputs as the Forward reads them from a staged io image at `base` (the io, or one
-    // chunk's copy in a layer walk's area).
-    execution::ForwardBatch io_batch(std::byte* base, std::int32_t batch, std::int32_t width,
+    // chunk's copy in a layer walk's area) with the layout `io` (the active view's, or the walk
+    // span's snapshot).
+    execution::ForwardBatch io_batch(std::byte* base, const IoLayout& io, std::int32_t batch, std::int32_t width,
                                      std::int32_t logit_columns) const {
         const std::int32_t cols = batch * width;
         execution::ForwardBatch fb;
-        fb.ids           = Tensor(base + io_layout_.ids, DType::I32, {cols});
-        fb.positions     = Tensor(base + io_layout_.positions, DType::I32, {cols});
-        fb.rope_positions   = Tensor(base + io_layout_.rope, DType::I32, {cols, 3});
-        fb.block_start_rope = Tensor(base + io_layout_.block_rope, DType::I32, {batch, 3});
-        fb.slots         = Tensor(base + io_layout_.slots, DType::I32, {batch});
-        fb.table_rows    = Tensor(base + io_layout_.rows, DType::I32, {batch});
-        fb.logit_columns = Tensor(base + io_layout_.columns, DType::I32, {logit_columns});
-        fb.ngram_rows    = Tensor(base + io_layout_.ngram, DType::U8,
+        fb.ids           = Tensor(base + io.ids, DType::I32, {cols});
+        fb.positions     = Tensor(base + io.positions, DType::I32, {cols});
+        fb.rope_positions   = Tensor(base + io.rope, DType::I32, {cols, 3});
+        fb.block_start_rope = Tensor(base + io.block_rope, DType::I32, {batch, 3});
+        fb.slots         = Tensor(base + io.slots, DType::I32, {batch});
+        fb.table_rows    = Tensor(base + io.rows, DType::I32, {batch});
+        fb.logit_columns = Tensor(base + io.columns, DType::I32, {logit_columns});
+        fb.ngram_rows    = Tensor(base + io.ngram, DType::U8,
                                   {dim(c_.ple.table.row_bytes), dim(hash_.heads()), cols});
         fb.host_slots      = std::span<const std::int32_t>(host_lanes_.data(), static_cast<std::size_t>(batch));
         fb.host_table_rows = fb.host_slots;
@@ -3537,7 +3753,7 @@ private:
                              io_words(io_layout_.mtp_block_rope, 3ULL * subchunks));
         lane.mtp_cells = static_cast<std::uint32_t>(begin + columns);
         lane.mtp_live  = true;
-        auto* base = static_cast<std::byte*>(io_device_.p);
+        auto* base = device_io();
         execution::MtpChunk chunk;
         chunk.saved     = saved_column(index);
         chunk.prepend   = prepend;
@@ -4203,14 +4419,41 @@ private:
     std::unique_ptr<ExpertResidency> residency_;
     std::unique_ptr<execution::ExpertStream> expert_stream_;
     ExpertResidency::FrameLease stream_lease_;
-    // The stream lease: the ring, the wide arena, then a walk area.
+    // The stream lease: the ring, the wide region ([arena | io staging]), then a walk area.
     std::size_t stream_ring_bytes_ = 0, stream_wide_bytes_ = 0, stream_walk_bytes_ = 0;
-    std::size_t wide_work_ = 0;              // the plan's wide arena bytes (0: none)
-    ExpertResidency::FrameLease work_lease_; // the wide arena lent alone (no stream lease)
-    DeviceBuffer wide_fallback_;             // the wide arena when nothing could be lent
+    std::size_t stream_wide_arena_ = 0;           // the arena's part of the stream lease's wide region
+    std::byte* wide_region_ = nullptr;            // the stream lease's [arena | io] region
+    std::size_t wide_work_ = 0;                   // the plan's wide arena bytes (0: none)
+    ExpertResidency::FrameLease work_lease_;      // the wide region lent alone (no stream lease)
+    DeviceBuffer wide_fallback_;                  // the wide region when nothing could be lent
+    std::byte* work_region_       = nullptr;      // the alone-lent or fallback region's base
+    std::size_t work_region_arena_ = 0;           // its arena's bytes (the io staging follows)
     std::unique_ptr<WorkspaceArena> wide_arena_; // the arena swapped with *work_ around a wide call
     execution::ExpertStream::Stats stream_at_lease_;
     execution::Forward::SplitStats split_at_lease_;
+
+    // ---- --prefill auto: per-request lent chunks (design §13, #73) ----
+    std::int32_t auto_ceiling_ = 0;               // 0: the fixed-chunk route (layout and behavior unchanged)
+    prefill_sizing::ChunkGrid auto_grid_;         // the candidate grid (step 128, or whole attention waves)
+    prefill_sizing::LoanTerms auto_terms_;        // the price of one prompt's loan at a probed chunk
+    std::uint32_t request_chunk_ = 0;             // the chunk the request being planned resolved to
+    std::int32_t prompt_loan_columns_ = 0;        // the lending prompt's resolved chunk (0: none)
+    // A wide auto call's io staging: the loan region's layout, its pinned mirror and the device
+    // part (after the arena inside the current wide region). One per prompt, returned with the loan.
+    struct WideIo {
+        IoLayout layout;
+        std::optional<PinnedHostBuffer> host;
+        std::byte* device    = nullptr;
+        std::int32_t columns = 0;
+        [[nodiscard]] bool active() const noexcept { return columns != 0; }
+        void clear() {
+            layout  = {};
+            host    = std::nullopt;
+            device  = nullptr;
+            columns = 0;
+        }
+    } wide_io_;
+    bool io_wide_view_ = false;                   // io_layout_ and the view bases name the wide region
 
     // ---------------------------------------------------------------- layer walk (prefill_walk.cpp)
     // Design §19.3.8 F4: a span of consecutive streamed calls of one prompt runs layer-major (every
@@ -4226,6 +4469,7 @@ private:
         std::uint32_t next_layer      = 0;                // the next decoder layer to enqueue
         std::uint32_t layers_per_step = 1;
         std::size_t io_stride = 0, residual_bytes = 0;
+        IoLayout io; // the span's io image layout (the wide staging's, on a lending route)
         std::int32_t host_slot = 0; // the lane's state slot as the Forward reads it on the host
         std::vector<std::optional<execution::MtpChunk>> mtp;
         std::vector<std::optional<execution::VisionInput>> vision;

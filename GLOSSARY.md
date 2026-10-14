@@ -58,7 +58,7 @@ The allocation units of the paged context store; capacity is accounted in page g
 A checkpoint taken at an exact semantic boundary, so a prefix can be resumed or reused without recomputation.
 
 **Chunk (prefill chunk)**:
-The token count a single prefill call processes; today fixed at startup (`--prefill-chunk`), with per-request sizing ported in #73.
+The token count a single prefill call processes; fixed at startup (`--prefill-chunk`), or resolved per request from the expert cache's live lendable frames (`--prefill auto`, ported by #73).
 
 **Main-KV**:
 A lane's live KV reservation, as distinct from cached prefix blocks.

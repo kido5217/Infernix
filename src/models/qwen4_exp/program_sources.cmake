@@ -16,6 +16,7 @@ target_sources(infernix_model_runtime PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/program/ngram_volume.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/program.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/expert_residency.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/program/prefill_sizing.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/rope_positions.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/vision_program.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/prefill_walk.cpp"

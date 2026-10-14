@@ -599,15 +599,24 @@ void ProgramImpl::prefix_activate(Lane& lane, std::uint32_t index, const PrefixS
 
 // The prompt's prefill calls from `frontier` (design §19.3.1, "Prefill integration"): with `taps`, the
 // prefix taps beyond the frontier (no tap inside a Vision item), exact ones admitted by their cost.
+// The calls step by the request's resolved chunk (request_chunk_): the fixed route's startup chunk,
+// the auto route's per-request lent one (design §13, #73).
 prefix::CallPlan ProgramImpl::plan_prefill(const qwen3_5::PreparedPromptData& prompt, std::uint32_t frontier,
                                            std::span<const std::uint32_t> existing, bool taps) const {
     const auto n = static_cast<std::uint32_t>(prompt.token_ids.size());
     std::vector<pc::PlannedTap> planned;
     if (taps && prefix_) {
         const std::vector<pc::TapExclusion> spans = prefix_exclusions(prompt);
-        planned = pc::plan_taps(n, frontier, prompt.tap_hints.hints, existing, spans, prefix_->taps());
+        auto config                               = prefix_->taps();
+        if (auto_ceiling_ != 0) {
+            // Contract (b): the ladder anchors on the resolved chunk, so its taps land on that
+            // prompt's boundaries (the startup defaults are anchored on the fallback chunk).
+            config.ladder_tokens  = std::max<std::uint32_t>(4096U, 2U * request_chunk_);
+            config.min_gap_tokens = std::max<std::uint32_t>(1024U, request_chunk_);
+        }
+        planned = pc::plan_taps(n, frontier, prompt.tap_hints.hints, existing, spans, config);
     }
-    return prefix::plan_calls(frontier, n, static_cast<std::uint32_t>(chunk_), planned, call_cost());
+    return prefix::plan_calls(frontier, n, request_chunk_, planned, call_cost());
 }
 
 HybridPrefixCacheStats ProgramImpl::prefix_stats() const noexcept {
