@@ -1249,7 +1249,7 @@ closed.
 
 Table, JSON, and CSV reports identify the architecture, model instance, artifact, Engine configuration,
 load summary, memory capacity, KV payload, workspace peak, phase throughput, and speculative
-statistics. JSON schema version 20 records the public value objects directly:
+statistics. JSON schema version 21 records the public value objects directly:
 
 - `config`: constraint type, source/file, literal choices and mixed-request selection, alongside execution settings;
 - `load`: architecture, public name, actual formats, prefill signature, load/upload time,
