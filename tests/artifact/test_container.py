@@ -227,11 +227,13 @@ def _expert_specs():
         TensorSpec("bias", (130,), "bf16", "contiguous_le_v1"),
         ResourceSpec("template", 5),
         TensorSpec("experts", (16, 16, 16), "nvfp4_mul", "nvfp4_expert_rg16_v1"),
+        TensorSpec("experts2", (16, 16, 16), "nvfp4_mul", "nvfp4_expert_rg16_v1"),
         TensorSpec("tail", (2,), "fp32", "contiguous_le_v1"),
     ]
 
 
 def _write_expert_artifact(path: Path, *, max_file_bytes=None):
+    assert EXPERT_STREAM_ALIGNMENT == 2 * 1024 * 1024
     bank = bytes(
         (offset * 131 + 7) % 253 for offset in range(EXPERT_STREAM_ALIGNMENT // 4)
     )
@@ -239,6 +241,7 @@ def _write_expert_artifact(path: Path, *, max_file_bytes=None):
     bank = (bank * (geometry.payload_bytes // len(bank) + 1))[
         : geometry.payload_bytes
     ]
+    banks = {"experts": bank, "experts2": bytes(b ^ 0x5A for b in bank)}
     options = {} if max_file_bytes is None else {"max_file_bytes": max_file_bytes}
     with ArtifactWriter(
         path,
@@ -254,15 +257,16 @@ def _write_expert_artifact(path: Path, *, max_file_bytes=None):
     ) as writer:
         writer.write_object("bias", bytes(260))
         writer.write_object("template", b"hello")
-        writer.write_object("experts", bank)
+        writer.write_object("experts", banks["experts"])
+        writer.write_object("experts2", banks["experts2"])
         writer.write_object("tail", struct.pack("<2f", 1.0, 2.0))
-        return writer.directory.to_json(), writer.payload_offset, bank
+        return writer.directory.to_json(), writer.payload_offset, banks
 
 
 def test_expert_stream_object_is_aligned_in_file_space(tmp_path):
     path = tmp_path / "expert.ninfer"
-    directory, payload_offset, bank = _write_expert_artifact(path)
-    assert payload_offset % EXPERT_STREAM_ALIGNMENT == 0
+    directory, payload_offset, banks = _write_expert_artifact(path)
+    assert payload_offset == EXPERT_STREAM_ALIGNMENT
     raw = path.read_bytes()
     magic, json_bytes, _ = HEADER.unpack(raw[: HEADER.size])
     assert magic == MAGIC
@@ -271,22 +275,25 @@ def test_expert_stream_object_is_aligned_in_file_space(tmp_path):
     objects = {obj["id"]: obj for obj in directory["objects"]}
     assert objects["bias"]["offset"] == 0
     assert objects["template"]["offset"] == 260
-    assert objects["experts"]["offset"] == EXPERT_STREAM_ALIGNMENT
-    # Objects after the stream keep their layout minimum: 256-byte, not 2 MiB, alignment.
-    assert objects["tail"]["offset"] == EXPERT_STREAM_ALIGNMENT + align_up(
-        len(bank), 256
+    assert objects["experts"]["offset"] == 2 * 1024 * 1024
+    assert objects["experts2"]["offset"] == 4 * 1024 * 1024
+    # Objects after the streams keep their layout minimum: 256-byte, not 2 MiB, alignment.
+    assert objects["tail"]["offset"] == 4 * 1024 * 1024 + align_up(
+        len(banks["experts2"]), 256
     )
-    start = payload_offset + objects["experts"]["offset"]
-    assert start % EXPERT_STREAM_ALIGNMENT == 0
-    assert raw[start : start + len(bank)] == bank
+    for name in ("experts", "experts2"):
+        start = payload_offset + objects[name]["offset"]
+        assert start % EXPERT_STREAM_ALIGNMENT == 0
+        assert raw[start : start + len(banks[name])] == banks[name]
     with Artifact(path) as reader:
-        assert reader.read_object("experts") == bank
+        assert reader.read_object("experts") == banks["experts"]
+        assert reader.read_object("experts2") == banks["experts2"]
         assert reader.read_object("template") == b"hello"
 
 
 def test_expert_stream_alignment_holds_across_parts(tmp_path):
     path = tmp_path / "expert.ninfer"
-    directory, payload_offset, bank = _write_expert_artifact(
+    directory, payload_offset, banks = _write_expert_artifact(
         path, max_file_bytes=3 * 1024 * 1024
     )
     files = directory["files"]
@@ -294,23 +301,47 @@ def test_expert_stream_alignment_holds_across_parts(tmp_path):
         None,
         "expert.ninfer.part-0001",
         "expert.ninfer.part-0002",
+        "expert.ninfer.part-0003",
     ]
     # Segment capacities keep every following volume start 4 KiB past a 2 MiB boundary.
     assert files[0]["payload_bytes"] % EXPERT_STREAM_ALIGNMENT == PAYLOAD_ALIGNMENT
-    assert files[1]["payload_bytes"] % EXPERT_STREAM_ALIGNMENT == 0
-    experts = {obj["id"]: obj for obj in directory["objects"]}["experts"]
+    assert files[1]["payload_bytes"] == EXPERT_STREAM_ALIGNMENT
+    assert files[2]["payload_bytes"] == EXPERT_STREAM_ALIGNMENT
+    objects = {obj["id"]: obj for obj in directory["objects"]}
+
+    # First bank: starts at the first byte of part-0001's payload region, straddles the
+    # volume end and resumes at part-0002's 4 KiB-aligned payload start.
+    experts = objects["experts"]
     local = experts["offset"] - files[0]["payload_bytes"]
     segment_start = PAYLOAD_ALIGNMENT + local
-    assert segment_start % EXPERT_STREAM_ALIGNMENT == 0
+    assert segment_start == EXPERT_STREAM_ALIGNMENT
     part = (tmp_path / files[1]["path"]).read_bytes()
     visible = files[1]["payload_bytes"] - local
-    assert part[segment_start : segment_start + visible] == bank[:visible]
-    tail = (tmp_path / files[2]["path"]).read_bytes()
-    assert tail[PAYLOAD_ALIGNMENT : PAYLOAD_ALIGNMENT + len(bank) - visible] == (
-        bank[visible:]
+    assert part[segment_start : segment_start + visible] == banks["experts"][:visible]
+    part2 = (tmp_path / files[2]["path"]).read_bytes()
+    assert part2[PAYLOAD_ALIGNMENT : PAYLOAD_ALIGNMENT + len(banks["experts"]) - visible] == (
+        banks["experts"][visible:]
     )
+
+    # Strong property across two full volumes: the second bank starts inside part-0002;
+    # its 2 MiB-aligned logical offset maps to an exactly 2 MiB-aligned file offset there.
+    experts2 = objects["experts2"]
+    part2_begin = files[0]["payload_bytes"] + files[1]["payload_bytes"]
+    local2 = experts2["offset"] - part2_begin
+    segment_start2 = PAYLOAD_ALIGNMENT + local2
+    assert segment_start2 % EXPERT_STREAM_ALIGNMENT == 0
+    visible2 = files[2]["payload_bytes"] - local2
+    assert part2[segment_start2 : segment_start2 + visible2] == banks["experts2"][:visible2]
+
+    # The straddle resumes at part-0003's payload start (4 KiB aligned, as documented).
+    remainder = (tmp_path / files[3]["path"]).read_bytes()
+    assert remainder[PAYLOAD_ALIGNMENT : PAYLOAD_ALIGNMENT + len(banks["experts2"]) - visible2] == (
+        banks["experts2"][visible2:]
+    )
+    assert remainder[-8:] == struct.pack("<2f", 1.0, 2.0)
     with Artifact(path) as reader:
-        assert reader.read_object("experts") == bank
+        assert reader.read_object("experts") == banks["experts"]
+        assert reader.read_object("experts2") == banks["experts2"]
 
 
 def test_artifacts_without_expert_streams_keep_the_4kib_default(tmp_path):

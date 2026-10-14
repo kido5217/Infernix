@@ -41,9 +41,11 @@ def layout_directory(
 
     ``segment_alignment`` is the placement alignment the artifact's objects demand: the entry
     payload start is rounded to it, the entry segment capacity is congruent to the part header
-    size modulo it and every following full capacity is a multiple of it, so a strongly aligned
-    object stays aligned in file space inside every continuation volume. With the default
-    ``PAYLOAD_ALIGNMENT`` the layout is byte-identical to the historical 4 KiB writer.
+    size modulo it and every following full capacity is a multiple of it, so the start of a
+    strongly aligned object maps to an aligned file offset in the volume holding that start; a
+    bank straddling a volume boundary resumes at that volume's payload start (4 KiB aligned).
+    With the default ``PAYLOAD_ALIGNMENT`` the layout is byte-identical to the historical 4 KiB
+    writer.
     """
     integer(payload_bytes, "payload bytes", positive=True)
     integer(max_file_bytes, "maximum file bytes", positive=True)
