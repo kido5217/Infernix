@@ -330,7 +330,11 @@ Tensor bytes equal the encoded size of the corresponding `(format,layout,shape)`
 
 Gaps between objects and unreferenced logical payload bytes at the end have no load semantics. A regular
 writer only leaves space for alignment and truncates at the end of the last object. Padding inside a
-completely encoded object continues to follow its layout contract.
+completely encoded object continues to follow its layout contract. Writers may place objects more strongly
+than the section 6.2 minima: the converter starts streamed routed-expert bank objects on 2 MiB boundaries,
+along with the entry payload start and file segment capacities so the alignment holds in file space across
+parts, for huge-page mapping and wide O_DIRECT reads of the SSD expert tier; the section 6.2 values remain
+the minimum every reader must accept.
 
 When multiple logical uses share the same object they all reference the same ID; the materializer
 establishes the backing once on that basis.
