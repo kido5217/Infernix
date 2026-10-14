@@ -27,55 +27,80 @@ HostMemoryLedger plan_host_memory(const HostMemorySnapshot& snapshot, const Host
     out.planned   = pinned_other + demand.pageable + demand.load_staging + demand.process_growth;
     out.full_need = with_lock_overhead(demand.expert_banks, demand.lock_overhead) + demand.full_margin;
     // Physical memory: the reserve and everything planned come first.
-    std::uint64_t room = saturating_sub(snapshot.available_physical, demand.reserve + out.planned);
+    const std::uint64_t phys_room = saturating_sub(snapshot.available_physical, demand.reserve + out.planned);
     // Commit: every pin and the process's growth are committed too, and the reserve must survive.
     const std::uint64_t commit_room = saturating_sub(snapshot.available_commit, demand.reserve + out.planned);
-    if (commit_room < room) {
-        room               = commit_room;
-        out.commit_limited = true;
-    }
-    out.expert_ram = std::min(room, out.full_need);
+    // The file tier's page-cache floor is charged to the physical bound only: a page cache is not
+    // committed to the page file, so a commit-limited machine loses no expert RAM to it. Full mode
+    // never streams from file, so the floor can only bite when the plan lands on the SSD tier.
+    const std::uint64_t floor =
+        demand.file_tier_possible ? std::uint64_t(kFileCacheFloorLayers) * demand.layer_banks : 0;
+    const std::uint64_t tier_phys_room = saturating_sub(phys_room, floor); // physical bound once the floor is kept
+    const std::uint64_t tier_room      = std::min(tier_phys_room, commit_room); // never negative
+    out.expert_room = tier_room;
+    // What the experts may take if the plan runs full mode: the ledger before any floor.
+    out.expert_ram = std::min(std::min(phys_room, commit_room), out.full_need);
+    out.commit_limited = commit_room < tier_phys_room; // the page file, not physical RAM, bounds the tier
     if (demand.expert_cap) {
-        out.cap_too_large = *demand.expert_cap > room && *demand.expert_cap < out.full_need;
+        // A tier-selecting cap may not exceed what the ledger leaves once the floor is kept; a cap
+        // at or above the full need still means full mode, never a refusal.
+        out.cap_too_large = *demand.expert_cap > tier_room && *demand.expert_cap < out.full_need;
         if (*demand.expert_cap < out.expert_ram) {
             out.expert_ram = *demand.expert_cap;
             out.capped     = true;
         }
     }
     out.placement = out.expert_ram >= out.full_need ? ExpertPlacement::Full : ExpertPlacement::Tier;
+    if (out.placement == ExpertPlacement::Tier) {
+        out.file_cache_floor = floor;
+        out.expert_ram       = std::min(out.expert_ram, tier_room);
+    }
     if (out.placement == ExpertPlacement::Full || out.capped) { out.commit_limited = false; }
     return out;
 }
 
 std::string HostMemoryLedger::describe() const {
-    char line[640];
+    char floor_note[96] = "";
+    if (file_cache_floor) {
+        std::snprintf(floor_note, sizeof(floor_note), "; page cache %.2f GiB held for the streamed files",
+                      gib(file_cache_floor));
+    }
+    char line[896];
     std::snprintf(line, sizeof(line),
                   "RAM ledger: available %.2f GiB of %.2f (commit %.2f); reserve %.2f; other pins %.2f; later pins "
                   "%.2f; prefix cache %.2f; caches %.2f; staging %.2f; growth %.2f -> experts %.2f GiB of %.2f needed "
-                  "(banks %.2f + margin %.2f)%s%s; %s",
+                  "(banks %.2f + margin %.2f)%s%s%s; %s",
                   gib(snapshot.available_physical), gib(snapshot.total_physical), gib(snapshot.available_commit),
                   gib(demand.reserve), gib(demand.other_pinned), gib(demand.later_pinned), gib(demand.prefix_cache),
                   gib(demand.pageable),
                   gib(demand.load_staging),
                   gib(demand.process_growth), gib(expert_ram), gib(full_need), gib(demand.expert_banks),
                   gib(demand.full_margin), commit_limited ? ", limited by the page file" : "",
-                  capped ? ", capped by --expert-ram-mib" : "",
+                  capped && !cap_too_large
+                      ? ", capped by --expert-ram-mib"
+                      : cap_too_large
+                            ? ", --expert-ram-mib refused: above what the ledger leaves once the floor is kept"
+                            : "", floor_note,
                   placement == ExpertPlacement::Full ? "full mode (every expert in RAM)"
                                                      : "SSD tier (experts not in RAM are read from the artifact)");
     return line;
 }
 
 std::string HostMemoryLedger::summary() const {
-    char line[320];
+    char floor_note[96] = "";
+    if (file_cache_floor) {
+        std::snprintf(floor_note, sizeof(floor_note), ", %.1f GiB kept for the OS file cache", gib(file_cache_floor));
+    }
+    char line[448];
     if (placement == ExpertPlacement::Full) {
         std::snprintf(line, sizeof(line), "RAM: %.1f of %.1f GiB free; every expert fits in RAM (%.1f GiB)",
                       gib(snapshot.available_physical), gib(snapshot.total_physical), gib(demand.expert_banks));
     } else {
         std::snprintf(line, sizeof(line),
                       "RAM: %.1f of %.1f GiB free; %.1f of the experts' %.1f GiB fit in RAM%s, the rest are read "
-                      "from the model files on demand (slower)",
+                      "from the model files on demand (slower)%s",
                       gib(snapshot.available_physical), gib(snapshot.total_physical), gib(expert_ram),
-                      gib(demand.expert_banks), capped ? " (--expert-ram-mib)" : "");
+                      gib(demand.expert_banks), capped && !cap_too_large ? " (--expert-ram-mib)" : cap_too_large ? " (--expert-ram-mib refused)" : "", floor_note);
     }
     return line;
 }

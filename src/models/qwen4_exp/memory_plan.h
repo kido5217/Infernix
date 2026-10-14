@@ -2,7 +2,9 @@
 
 // The startup memory plans of Qwen3.8-Flash-Next (docs/maintainer/qwen3_8-flash-next-design.md
 // §19.3.7). Host RAM: what the experts may take once a reserve stays free for the system and every
-// other allocation the engine will make is planned; one reserve covers every pinned allocation.
+// other allocation the engine will make is planned; one reserve covers every pinned allocation. On
+// the file tier, a page-cache floor (kFileCacheFloorLayers layers' banks) also stays out of the
+// experts, so streamed expert file pages survive in the OS cache between passes.
 // Device memory: what the expert frames may take once the fixed allocations, a reserve for
 // Infernix's own later allocations and a headroom for the display and other programs are left.
 
@@ -17,6 +19,11 @@
 namespace infernix::models::qwen4_exp {
 
 inline constexpr std::uint64_t kLedgerGiB = 1ULL << 30;
+
+// The file tier's OS page-cache floor, in layers' routed-expert bytes. The streamed records are the
+// banks themselves, so keeping this much RAM for the page cache lets the kernel hold the hot expert
+// file pages resident instead of re-reading them at drive speed mid-pass.
+inline constexpr std::uint32_t kFileCacheFloorLayers = 2;
 
 struct HostMemoryDemand {
     // Physical memory left free for the OS and other programs (--ram-headroom-mib).
@@ -39,6 +46,13 @@ struct HostMemoryDemand {
     double lock_overhead = 0.0025;
     // Full mode needs this much beyond the banks, so the system is not run at the reserve's edge.
     std::uint64_t full_margin = kLedgerGiB;
+    // The artifact has a file tier the plan may fall to. When it selects Tier placement, a floor of
+    // kFileCacheFloorLayers layers' banks stays out of the experts' RAM for the OS page cache; full
+    // mode never streams from file and pays no floor.
+    bool file_tier_possible = false;
+    // One decoder layer's routed-expert banks (expert_banks / layer count). With file_tier_possible,
+    // sizes the page-cache floor.
+    std::uint64_t layer_banks = 0;
     // --expert-ram-mib: at most this much RAM for the experts (less than full mode needs selects the
     // SSD tier even when more is free). Empty: what the ledger leaves.
     std::optional<std::uint64_t> expert_cap;
@@ -65,6 +79,13 @@ struct HostMemoryLedger {
     // expert_cap bounded expert_ram; the cap asked for more than the ledger leaves (an error).
     bool capped        = false;
     bool cap_too_large = false;
+    // What the ledger leaves for the experts before the cap, the physical bound reduced by the
+    // page-cache floor when the artifact has a file tier (a page cache is not committed, so the
+    // commit bound carries no floor): the largest safe --expert-ram-mib in SSD tier mode.
+    std::uint64_t expert_room = 0;
+    // The held-out OS page-cache floor (kFileCacheFloorLayers layers' banks); nonzero only under
+    // Tier placement on an artifact with a file tier, and already excluded from expert_ram.
+    std::uint64_t file_cache_floor = 0;
     ExpertPlacement placement = ExpertPlacement::Tier;
 
     // One log line: the inputs and the outcome.

@@ -129,12 +129,19 @@ ConstructedQwen4Exp construct_qwen4_exp(const EngineOptions& options, DeviceCont
     demand.pageable     = models::qwen4_exp::NgramVolume::cache_bytes(plan.config().text.ple.table);
     demand.load_staging = kLoadStagingBytes;
     demand.expert_cap   = options.expert_ram_bytes;
+    // The artifact has the file tier, so the plan keeps its page-cache floor: two layers' routed-
+    // expert bytes of OS page cache, held out of the experts' RAM when the SSD tier is selected.
+    const std::uint32_t ram_layers = plan.config().text.num_hidden_layers;
+    demand.file_tier_possible      = true;
+    demand.layer_banks             = ram_layers ? demand.expert_banks / ram_layers : 0;
     const auto ledger   = models::qwen4_exp::plan_host_memory(host_memory_snapshot(), demand);
     report(options, DiagnosticLevel::Info, ledger.summary());
     report(options, DiagnosticLevel::Debug, ledger.describe());
     if (ledger.cap_too_large) {
         throw std::runtime_error("--expert-ram-mib " + std::to_string(*options.expert_ram_bytes >> 20) +
-                                 " asks for more Host RAM than is free now (" + ledger.describe() +
+                                 " MiB asks for more Host RAM than the ledger leaves now, at most " +
+                                 std::to_string(ledger.expert_room >> 20) + " MiB once the reserve, the planned"
+                                 " allocations and the SSD file-cache floor are kept (" + ledger.describe() +
                                  "); lower it, use auto, or free Host memory");
     }
     // The SSD tier (design §19.3.7): the banks stay in the artifact; the Program pins RAM slots for

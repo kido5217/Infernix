@@ -1,11 +1,12 @@
 // The Qwen3.8-Flash-Next startup memory plans (design §19.3.7). RT1, the RAM ledger: the experts
 // take what the reserve and every planned allocation leave, full mode needs the banks plus the
-// margin, the commit limit bounds the experts like physical memory, and the reserve is applied
-// once. RT7, the VRAM sizing: the display headroom by display state, the OS budget without
-// stacking the headroom on it, the graph reserve, fixed allocations that do not fit, the frame
-// clamp, and the spill test with noisy free-memory readings. RT9, the runtime law of the elastic
-// pool: shrink on low free memory or an exceeded budget, hysteresis, the grow delay and per-boundary
-// cap, display hot-plug, and the reserve spent by Infernix's own later allocations.
+// margin, the commit limit bounds the experts like physical memory, the reserve is applied once,
+// and the SSD tier holds a page-cache floor out of the experts' RAM. RT7, the VRAM sizing: the
+// display headroom by display state, the OS budget without stacking the headroom on it, the graph
+// reserve, fixed allocations that do not fit, the frame clamp, and the spill test with noisy
+// free-memory readings. RT9, the runtime law of the elastic pool: shrink on low free memory or an
+// exceeded budget, hysteresis, the grow delay and per-boundary cap, display hot-plug, and the
+// reserve spent by Infernix's own later allocations.
 
 #include "models/qwen4_exp/memory_plan.h"
 
@@ -143,6 +144,91 @@ void test_expert_cap() {
     const HostMemoryLedger short_room = plan_host_memory(snapshot(30 * kGiB, 200 * kGiB), d);
     require(short_room.cap_too_large && short_room.placement == ExpertPlacement::Tier,
             "a cap larger than the ledger leaves is flagged");
+}
+
+// ---------------------------------------------------------------- RT1, the file-cache floor
+
+// The SSD tier's OS page-cache floor: two layers' routed-expert bytes (kFileCacheFloorLayers),
+// subtracted from the experts' room only under Tier placement and only from the physical bound (a
+// page cache is not committed), never past zero, enforced against --expert-ram-mib, and printed in
+// the ledger lines when active.
+void test_file_cache_floor() {
+    HostMemoryDemand d;
+    d.reserve             = 2 * kGiB;
+    d.expert_banks        = 64'801 * kMiB;
+    d.other_pinned        = 1'212'825'600;
+    d.later_pinned        = 256 * kMiB;
+    d.pageable            = 160 * kMiB;
+    d.load_staging        = 264 * kMiB;
+    d.file_tier_possible  = true;
+    d.layer_banks         = 1350 * kMiB; // this model's banks / 48 layers, rounded down
+    const std::uint64_t floor = kFileCacheFloorLayers * d.layer_banks;
+    const std::uint64_t need  = need_for_full(d);
+
+    // Full mode pays no floor, not even with less than the floor to spare above the full need.
+    const HostMemoryLedger full = plan_host_memory(snapshot(need, 200 * kGiB), d);
+    require(full.placement == ExpertPlacement::Full && full.file_cache_floor == 0 &&
+                full.expert_ram == full.full_need && full.describe().find("page cache") == std::string::npos,
+            "exactly enough RAM runs full mode with no floor");
+    const HostMemoryLedger tight_full = plan_host_memory(snapshot(need + floor / 2, 200 * kGiB), d);
+    require(tight_full.placement == ExpertPlacement::Full && tight_full.file_cache_floor == 0,
+            "nothing streams from file in full mode, so half a floor of slack is enough");
+
+    // The SSD tier pays the floor: one byte short of full mode, the experts give up the whole floor.
+    const HostMemoryLedger below = plan_host_memory(snapshot(need - 1, 200 * kGiB), d);
+    require(below.placement == ExpertPlacement::Tier && below.file_cache_floor == floor &&
+                below.expert_ram == below.full_need - 1 - floor,
+            "the tier's expert RAM is the ledger room less the page-cache floor");
+    require(below.describe().find("page cache") != std::string::npos &&
+                below.summary().find("file cache") != std::string::npos,
+            "the printed ledger lines carry the floor when active");
+    // A room smaller than the floor leaves nothing, never a negative something.
+    const HostMemoryLedger starved = plan_host_memory(snapshot(d.reserve + below.planned + floor / 2, 200 * kGiB), d);
+    require(starved.expert_ram == 0 && starved.placement == ExpertPlacement::Tier &&
+                starved.file_cache_floor == floor,
+            "a room below the floor leaves no expert RAM");
+
+    // Without a file tier there is no floor, and full mode is unaffected by the flag.
+    HostMemoryDemand plain = d;
+    plain.file_tier_possible = false;
+    require(plan_host_memory(snapshot(need - 1, 200 * kGiB), plain).expert_ram == below.expert_ram + floor &&
+                plan_host_memory(snapshot(need, 200 * kGiB), plain).expert_ram == full.expert_ram,
+            "an artifact without a file tier plans exactly as before");
+
+    // A cap the floor leaves room for selects the tier with exactly the cap; a cap above the room
+    // the floor leaves is refused, and the ledger names that room as the largest safe value.
+    HostMemoryDemand fit = d;
+    fit.expert_cap = 32 * kGiB;
+    const HostMemoryLedger ok = plan_host_memory(snapshot(need + 10 * kGiB, 200 * kGiB), fit);
+    require(!ok.cap_too_large && ok.capped && ok.expert_ram == 32 * kGiB && ok.file_cache_floor == floor,
+            "a cap below what the floor leaves selects the SSD tier with exactly the cap");
+    HostMemoryDemand too_big = d;
+    too_big.expert_cap = below.full_need - 1;
+    const HostMemoryLedger refused = plan_host_memory(snapshot(need + floor / 2, 200 * kGiB), too_big);
+    require(refused.cap_too_large && refused.placement == ExpertPlacement::Tier &&
+                refused.expert_room == refused.full_need - floor / 2,
+            "a cap above what the floor leaves is refused and the room is reported");
+    require(refused.describe().find("capped by") == std::string::npos &&
+                refused.describe().find("refused") != std::string::npos &&
+                refused.describe().find("page cache") != std::string::npos,
+            "the refusal's ledger line states the floor's outcome, not a cap the plan kept");
+
+    // The largest safe value the refusal names is accepted: the same room exactly, unflagged, at the cap.
+    HostMemoryDemand maxed = d;
+    maxed.expert_cap = refused.expert_room;
+    const HostMemoryLedger exact = plan_host_memory(snapshot(need + floor / 2, 200 * kGiB), maxed);
+    require(!exact.cap_too_large && exact.capped && exact.expert_ram == refused.expert_room &&
+                exact.file_cache_floor == floor &&
+                exact.describe().find("capped by --expert-ram-mib") != std::string::npos,
+            "a cap exactly at the largest safe value is accepted, not refused");
+
+    // The floor is charged to the physical bound only: a page cache is not committed to the page
+    // file, so a commit-bound machine loses no expert RAM to the floor.
+    const HostMemoryLedger bounded  = plan_host_memory(snapshot(need + 20 * kGiB, need - 5 * kGiB), d);
+    const HostMemoryLedger no_floor = plan_host_memory(snapshot(need + 20 * kGiB, need - 5 * kGiB), plain);
+    require(bounded.placement == ExpertPlacement::Tier && bounded.commit_limited &&
+                bounded.file_cache_floor == floor && bounded.expert_ram == no_floor.expert_ram,
+            "a commit-bound plan pays the floor nothing: the page file is the bound");
 }
 
 // ---------------------------------------------------------------- RT7
@@ -385,6 +471,7 @@ int main() {
         test_commit_limit();
         test_starved_and_describe();
         test_expert_cap();
+        test_file_cache_floor();
         test_graph_bound();
         test_display_headroom();
         test_internal_reserve();
