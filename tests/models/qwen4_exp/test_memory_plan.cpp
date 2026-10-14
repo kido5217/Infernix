@@ -149,8 +149,9 @@ void test_expert_cap() {
 // ---------------------------------------------------------------- RT1, the file-cache floor
 
 // The SSD tier's OS page-cache floor: two layers' routed-expert bytes (kFileCacheFloorLayers),
-// subtracted from the experts' room only under Tier placement, never past zero, enforced against
-// --expert-ram-mib, and printed in the ledger lines when active.
+// subtracted from the experts' room only under Tier placement and only from the physical bound (a
+// page cache is not committed), never past zero, enforced against --expert-ram-mib, and printed in
+// the ledger lines when active.
 void test_file_cache_floor() {
     HostMemoryDemand d;
     d.reserve             = 2 * kGiB;
@@ -207,6 +208,27 @@ void test_file_cache_floor() {
     require(refused.cap_too_large && refused.placement == ExpertPlacement::Tier &&
                 refused.expert_room == refused.full_need - floor / 2,
             "a cap above what the floor leaves is refused and the room is reported");
+    require(refused.describe().find("capped by") == std::string::npos &&
+                refused.describe().find("refused") != std::string::npos &&
+                refused.describe().find("page cache") != std::string::npos,
+            "the refusal's ledger line states the floor's outcome, not a cap the plan kept");
+
+    // The largest safe value the refusal names is accepted: the same room exactly, unflagged, at the cap.
+    HostMemoryDemand maxed = d;
+    maxed.expert_cap = refused.expert_room;
+    const HostMemoryLedger exact = plan_host_memory(snapshot(need + floor / 2, 200 * kGiB), maxed);
+    require(!exact.cap_too_large && exact.capped && exact.expert_ram == refused.expert_room &&
+                exact.file_cache_floor == floor &&
+                exact.describe().find("capped by --expert-ram-mib") != std::string::npos,
+            "a cap exactly at the largest safe value is accepted, not refused");
+
+    // The floor is charged to the physical bound only: a page cache is not committed to the page
+    // file, so a commit-bound machine loses no expert RAM to the floor.
+    const HostMemoryLedger bounded  = plan_host_memory(snapshot(need + 20 * kGiB, need - 5 * kGiB), d);
+    const HostMemoryLedger no_floor = plan_host_memory(snapshot(need + 20 * kGiB, need - 5 * kGiB), plain);
+    require(bounded.placement == ExpertPlacement::Tier && bounded.commit_limited &&
+                bounded.file_cache_floor == floor && bounded.expert_ram == no_floor.expert_ram,
+            "a commit-bound plan pays the floor nothing: the page file is the bound");
 }
 
 // ---------------------------------------------------------------- RT7

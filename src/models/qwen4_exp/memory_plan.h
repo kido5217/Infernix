@@ -79,8 +79,9 @@ struct HostMemoryLedger {
     // expert_cap bounded expert_ram; the cap asked for more than the ledger leaves (an error).
     bool capped        = false;
     bool cap_too_large = false;
-    // What the ledger leaves for the experts before the cap, the page-cache floor deducted when the
-    // artifact has a file tier: the largest safe --expert-ram-mib in SSD tier mode.
+    // What the ledger leaves for the experts before the cap, the physical bound reduced by the
+    // page-cache floor when the artifact has a file tier (a page cache is not committed, so the
+    // commit bound carries no floor): the largest safe --expert-ram-mib in SSD tier mode.
     std::uint64_t expert_room = 0;
     // The held-out OS page-cache floor (kFileCacheFloorLayers layers' banks); nonzero only under
     // Tier placement on an artifact with a file tier, and already excluded from expert_ram.

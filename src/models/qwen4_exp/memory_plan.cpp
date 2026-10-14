@@ -27,23 +27,23 @@ HostMemoryLedger plan_host_memory(const HostMemorySnapshot& snapshot, const Host
     out.planned   = pinned_other + demand.pageable + demand.load_staging + demand.process_growth;
     out.full_need = with_lock_overhead(demand.expert_banks, demand.lock_overhead) + demand.full_margin;
     // Physical memory: the reserve and everything planned come first.
-    std::uint64_t room = saturating_sub(snapshot.available_physical, demand.reserve + out.planned);
+    const std::uint64_t phys_room = saturating_sub(snapshot.available_physical, demand.reserve + out.planned);
     // Commit: every pin and the process's growth are committed too, and the reserve must survive.
     const std::uint64_t commit_room = saturating_sub(snapshot.available_commit, demand.reserve + out.planned);
-    if (commit_room < room) {
-        room               = commit_room;
-        out.commit_limited = true;
-    }
-    out.expert_ram = std::min(room, out.full_need);
-    // The file tier holds its page-cache floor out of the experts' room; full mode never streams
-    // from file, so the floor can only bite when the plan actually lands on the SSD tier.
+    // The file tier's page-cache floor is charged to the physical bound only: a page cache is not
+    // committed to the page file, so a commit-limited machine loses no expert RAM to it. Full mode
+    // never streams from file, so the floor can only bite when the plan lands on the SSD tier.
     const std::uint64_t floor =
         demand.file_tier_possible ? std::uint64_t(kFileCacheFloorLayers) * demand.layer_banks : 0;
-    const std::uint64_t tier_room = saturating_sub(room, floor); // never negative
+    const std::uint64_t tier_phys_room = saturating_sub(phys_room, floor); // physical bound once the floor is kept
+    const std::uint64_t tier_room      = std::min(tier_phys_room, commit_room); // never negative
     out.expert_room = tier_room;
+    // What the experts may take if the plan runs full mode: the ledger before any floor.
+    out.expert_ram = std::min(std::min(phys_room, commit_room), out.full_need);
+    out.commit_limited = commit_room < tier_phys_room; // the page file, not physical RAM, bounds the tier
     if (demand.expert_cap) {
-        // The cap may not exceed what the ledger leaves once the floor is kept (when the SSD tier
-        // is the only placement it can select); a cap at or above the full need still means full mode.
+        // A tier-selecting cap may not exceed what the ledger leaves once the floor is kept; a cap
+        // at or above the full need still means full mode, never a refusal.
         out.cap_too_large = *demand.expert_cap > tier_room && *demand.expert_cap < out.full_need;
         if (*demand.expert_cap < out.expert_ram) {
             out.expert_ram = *demand.expert_cap;
@@ -76,7 +76,11 @@ std::string HostMemoryLedger::describe() const {
                   gib(demand.load_staging),
                   gib(demand.process_growth), gib(expert_ram), gib(full_need), gib(demand.expert_banks),
                   gib(demand.full_margin), commit_limited ? ", limited by the page file" : "",
-                  capped ? ", capped by --expert-ram-mib" : "", floor_note,
+                  capped && !cap_too_large
+                      ? ", capped by --expert-ram-mib"
+                      : cap_too_large
+                            ? ", --expert-ram-mib refused: above what the ledger leaves once the floor is kept"
+                            : "", floor_note,
                   placement == ExpertPlacement::Full ? "full mode (every expert in RAM)"
                                                      : "SSD tier (experts not in RAM are read from the artifact)");
     return line;
