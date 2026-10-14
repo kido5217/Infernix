@@ -211,6 +211,12 @@ void test_wide_staging_and_grow() {
     check(ps::wide_staging_columns(896, 4096) == 0, "a chunk inside the static staging stays static");
     check(ps::wide_staging_columns(8064, 4096) == 8064,
           "the span's first call narrow, a later call at the chunk: the view is the chunk's");
+    // A forced-token run (lane decoding, review blocker): the view follows the call's width —
+    // narrow stays static (pre-PR behavior), and a wider forced stride gets a mirror sized to
+    // itself, never the previous prompt's chunk. (The phase gate itself is CallIo construction:
+    // the grammar-forced wide run on hardware is qualified with #76.)
+    check(ps::wide_staging_columns(1, 4096) == 0, "a narrow forced run keeps the static staging");
+    check(ps::wide_staging_columns(6144, 4096) == 6144, "a forced stride wider than the cap views at its own width");
     // The mirror's growth rule (Important 2): two differing resolved chunks reuse, replace or go
     // transient as the walk holds the layout or not.
     check(ps::io_grow_decision(false, 0, 8064, false) == ps::IoGrow::Allocate, "first wide prompt allocates");

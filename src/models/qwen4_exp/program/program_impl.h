@@ -3107,11 +3107,24 @@ private:
     // current layout's stride (the documented two-lane transient; #76 exercises it on hardware).
     struct CallIo {
         ProgramImpl& p;
-        explicit CallIo(ProgramImpl& program, const Lane& lane, std::int32_t /*width*/)
+        explicit CallIo(ProgramImpl& program, const Lane& lane, std::int32_t width)
             : p(program),
-              needed_(prefill_sizing::wide_staging_columns(lane.chunk, program.plan_.columns)) {
+              // A prefill unit's view must cover the widest call its plan can hold: the lane's
+              // resolved chunk (a span's later calls are wider than its first; Important 1). A
+              // forced-token run (review blocker): the lane decodes at its own narrow width, so
+              // the view follows THAT width — a narrow forced run stays on the static staging
+              // exactly as before this PR; a wide one gets the mirror and the enter_wide region
+              // the same call width now selects below (no wide call, no wide view: the static
+              // image must never be overrun by a wide-layout upload).
+              needed_(prefill_sizing::wide_staging_columns(
+                  lane.phase == Phase::Prefill ? lane.chunk : static_cast<std::uint32_t>(width),
+                  program.plan_.columns)) {
             p.prompt_loan_columns_ =
-                program.auto_ceiling_ != 0 ? static_cast<std::int32_t>(lane.chunk) : 0;
+                program.auto_ceiling_ != 0
+                    ? static_cast<std::int32_t>(lane.phase == Phase::Prefill
+                                                    ? lane.chunk
+                                                    : static_cast<std::uint32_t>(width))
+                    : 0;
             if (needed_ == 0) { return; }
             const bool replace =
                 prefill_sizing::io_grow_decision(program.wide_io_.active(), program.wide_io_.columns,
