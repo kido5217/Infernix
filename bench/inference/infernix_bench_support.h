@@ -15,7 +15,7 @@
 
 namespace infernix::bench {
 
-inline constexpr int kSchemaVersion                   = 20;
+inline constexpr int kSchemaVersion                   = 21;
 inline constexpr std::string_view kArtifactType       = "infernix_bench_report";
 inline constexpr std::string_view kDefaultCorpusPath  = "bench/fixtures/bench_corpus.ids";
 inline constexpr int kDecodeSeedTokens                = 1;
@@ -75,6 +75,9 @@ struct BenchOptions {
     std::uint32_t prefill_split_workspace_mib = kDefaultPrefillSplitWorkspaceMiB;
     bool original_nvfp4_prefill_kernel = false;
     std::uint32_t prefill_chunk       = kDefaultPrefillChunk;
+    // Qwen3.8-Flash-Next `--prefill auto[:N]`: per-request lent chunk sizing (design §13), 0 = off.
+    // The value is the auto ceiling; prefill_chunk stays the fallback and io staging cap.
+    std::uint32_t prefill_auto_ceiling = 0;
     KvCacheStorage kv_cache     = KvCacheStorage::BFloat16;
     SpeculativeOptions speculative;
     int device            = 0;
@@ -123,6 +126,7 @@ struct BenchEnvironment {
     float rope_yarn_factor      = 1.0F;
     std::uint32_t max_context   = 0;
     std::uint32_t prefill_chunk       = kDefaultPrefillChunk;
+    std::uint32_t prefill_auto_ceiling = 0;
     bool original_int8_prefill_kernel = false;
     PrefillPv8 prefill_8bit_pv         = PrefillPv8::Auto;
     std::uint32_t prefill_split_workspace_mib = kDefaultPrefillSplitWorkspaceMiB;
