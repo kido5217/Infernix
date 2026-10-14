@@ -85,8 +85,25 @@ bool apply_shipped_profile(ExpertStateLoad& loaded, const std::optional<SavedSta
     if (loaded.state || !profile) { return false; }
     loaded.state   = *profile;
     loaded.shipped = true;
-    loaded.message = "the artifact's shipped expert profile";
+    // The source is the profile, but the reason the sidecar gave way stays readable.
+    const std::string reason = std::move(loaded.message);
+    loaded.message = reason.empty()
+                         ? "the artifact's shipped expert profile"
+                         : "the artifact's shipped expert profile, after: " + reason;
     return true;
+}
+
+ExpertStateLoad warm_start_load(const std::filesystem::path& state_path, bool expert_cache,
+                                std::string_view identity, std::uint32_t keys,
+                                const std::optional<SavedState>& profile) {
+    ExpertStateLoad load;
+    if (!state_path.empty() && expert_cache) {
+        load = load_expert_state(state_path, identity, keys);
+        // The runtime-learned sidecar wins; the shipped profile seeds only a cold first run
+        // (missing or refused file). apply_shipped_profile records the source for the logs.
+        apply_shipped_profile(load, profile);
+    }
+    return load;
 }
 
 } // namespace infernix::models::qwen4_exp::expert_cache

@@ -2243,13 +2243,11 @@ public:
     // refilled with the next keys of the fill order, so the two levels hold different experts.
     void warm_start_experts() {
         const auto keys = c_.num_hidden_layers * c_.moe.experts;
-        expert_cache::ExpertStateLoad load;
-        if (!options_.expert_state.empty() && options_.expert_cache) {
-            load = expert_cache::load_expert_state(options_.expert_state, options_.expert_state_identity, keys);
-            // The runtime-learned sidecar wins; the shipped profile seeds only a cold first run
-            // (missing or refused file). apply_shipped_profile records the source for the logs.
-            expert_cache::apply_shipped_profile(load, options_.expert_profile);
-        }
+        // The runtime-learned sidecar wins; the shipped profile seeds only a cold first run
+        // (missing or refused file), and --expert-state off seeds neither.
+        const auto load = expert_cache::warm_start_load(options_.expert_state, options_.expert_cache,
+                                                        options_.expert_state_identity, keys,
+                                                        options_.expert_profile);
         TierFill fill;
         if (tier_) { fill = prefill_tier(load); }
         const std::uint32_t seeded = warm_start_frames(load);

@@ -158,3 +158,33 @@ def test_profile_from_expert_state_strips_identity(tmp_path):
     path = tmp_path / "pack.expert-state"
     path.write_bytes(sidecar)
     assert parse(profile_from_expert_state(path), layers=LAYERS, experts=EXPERTS) == (counts, ranked)
+
+
+def test_converter_cli_refuses_the_profile_for_other_models(tmp_path):
+    # The Qwen4Exp gate in tools/convert: a non-Qwen4Exp source must refuse --expert-profile
+    # before any conversion work happens.
+    from tools.convert import __main__ as convert_main
+
+    source = tmp_path / "qwen35"
+    source.mkdir()
+    (source / "config.json").write_text(json.dumps({
+        "architectures": ["Qwen3_5ForCausalLM"], "hidden_size": 128, "vocab_size": 8,
+        "num_hidden_layers": 1, "max_position_embeddings": 128, "layer_types": ["full_attention"],
+        "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 8, "intermediate_size": 24,
+        "rope_parameters": {"partial_rotary_factor": 0.5, "mrope_section": [1, 1, 0]},
+    }))
+    for name, payload in {
+        "tokenizer.json": {"model": {"vocab": {}}},
+        "tokenizer_config.json": {},
+        "generation_config.json": {},
+    }.items():
+        (source / name).write_text(json.dumps(payload))
+    profile = tmp_path / "profile.bin"
+    profile.write_bytes(encode([0, 0, 0, 0, 0, 0, 0, 0], [0, 1, 2, 3, 4, 5, 6, 7]))
+    out = tmp_path / "pack.ninfer"
+    recipe = tmp_path / "recipe.py"
+    recipe.write_text("")  # never reached: the refusal fires while picking the model branch
+    with pytest.raises(ValueError, match="--expert-profile applies only to Qwen4Exp sources"):
+        convert_main.main(["--model", str(source), "--out", str(out), "--recipe", str(recipe),
+                           "--expert-profile", str(profile)])
+    assert not out.exists()

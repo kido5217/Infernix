@@ -685,11 +685,41 @@ void test_shipped_profile() {
           "the runtime-learned sidecar keeps priority over the shipped profile");
     ExpertStateLoad cold;
     cold.message = "no saved expert state at ... yet";
-    check(apply_shipped_profile(cold, prior) && cold.state->ranked == ranked && cold.shipped,
-          "a refused sidecar load seeds from the shipped profile");
+    check(apply_shipped_profile(cold, prior) && cold.state->ranked == ranked && cold.shipped &&
+              cold.message.find("no saved expert state") != std::string::npos &&
+              cold.message.find("shipped expert profile") != std::string::npos,
+          "a refused sidecar load seeds from the shipped profile, keeping the refusal reason");
     ExpertStateLoad none;
     check(!apply_shipped_profile(none, std::nullopt) && !none.state && !none.shipped,
           "without a shipped profile, a cold start stays cold");
+
+    // The Program's whole call-site branch (warm_start_experts defers to this one function): the
+    // gating, the sidecar precedence and the shipped fallback, driven over real files.
+    const auto dir     = std::filesystem::temp_directory_path();
+    const auto path    = dir / "infernix_expert_profile_seam.bin";
+    const auto missing = dir / "infernix_expert_profile_seam_missing.bin";
+    std::filesystem::remove(missing);
+    const SavedState warm{{5, 0, 9, 1, 7, 0, 1, 0}, {2, 0, 3, 1, 5, 4, 7, 6}};
+    check(save_expert_state(path, "artifact A", warm).empty(), "the seam fixture saves a sidecar");
+    const auto seeds = [&](const ExpertStateLoad& l) {
+        return l.state && l.state->counts == counts && l.state->ranked == ranked && l.shipped;
+    };
+    const auto by_sidecar = warm_start_load(path, true, "artifact A", 8, prior);
+    check(by_sidecar.state && by_sidecar.state->counts == warm.counts && !by_sidecar.shipped,
+          "the seam: the runtime-learned sidecar wins over the shipped profile");
+    const auto by_profile = warm_start_load(missing, true, "artifact A", 8, prior);
+    check(seeds(by_profile) && by_profile.message.find("shipped expert profile") != std::string::npos,
+          "the seam: a missing sidecar seeds the warm start from the shipped profile");
+    const auto by_identity = warm_start_load(path, true, "artifact B", 8, prior);
+    check(seeds(by_identity) && by_identity.message.find("saved expert state") != std::string::npos,
+          "the seam: a refused sidecar seeds from the profile and still says why it gave way");
+    check(!warm_start_load(path, false, "artifact A", 8, prior).state &&
+              !warm_start_load(std::filesystem::path{}, true, "artifact A", 8, prior).state,
+          "the seam: an off warm start takes neither source (--expert-cache off or --expert-state off)");
+    const auto no_profile = warm_start_load(missing, true, "artifact A", 8, std::nullopt);
+    check(!no_profile.state && !no_profile.shipped && !no_profile.message.empty(),
+          "the seam: with no profile shipped, a cold start stays cold");
+    std::filesystem::remove(path);
 }
 
 int main() {

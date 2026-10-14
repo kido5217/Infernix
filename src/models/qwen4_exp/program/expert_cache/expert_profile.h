@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -32,9 +33,17 @@ struct ExpertProfileLoad {
 [[nodiscard]] ExpertProfileLoad parse_expert_profile(std::span<const std::byte> bytes, std::uint32_t keys);
 
 // Warm-start source choice: the runtime-learned sidecar state wins; the shipped profile seeds only
-// when `loaded` carries no state (missing or refused file), and then records its source. Returns
-// whether the profile became the seed. Callers gate this on the warm start being enabled at all
-// (--expert-state off seeds nothing).
+// when `loaded` carries no state (missing or refused file), and then records its source, keeping the
+// sidecar's refusal reason. Returns whether the profile became the seed. Callers gate this on the
+// warm start being enabled at all (--expert-state off seeds nothing).
 [[nodiscard]] bool apply_shipped_profile(ExpertStateLoad& loaded, const std::optional<SavedState>& profile);
+
+// The S4b warm start's source decision, exactly as Program::warm_start_experts applies it: with the
+// warm start enabled (a state file and the expert cache), load the sidecar and fall back to the
+// artifact's shipped profile; with it disabled, no source at all. Kept out of the Program so the
+// precedence and the gating are testable without a device.
+[[nodiscard]] ExpertStateLoad warm_start_load(const std::filesystem::path& state_path, bool expert_cache,
+                                              std::string_view identity, std::uint32_t keys,
+                                              const std::optional<SavedState>& profile);
 
 } // namespace infernix::models::qwen4_exp::expert_cache
