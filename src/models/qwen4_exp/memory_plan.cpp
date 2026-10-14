@@ -100,7 +100,7 @@ std::string HostMemoryLedger::summary() const {
                       "RAM: %.1f of %.1f GiB free; %.1f of the experts' %.1f GiB fit in RAM%s, the rest are read "
                       "from the model files on demand (slower)%s",
                       gib(snapshot.available_physical), gib(snapshot.total_physical), gib(expert_ram),
-                      gib(demand.expert_banks), capped ? " (--expert-ram-mib)" : "", floor_note);
+                      gib(demand.expert_banks), capped && !cap_too_large ? " (--expert-ram-mib)" : cap_too_large ? " (--expert-ram-mib refused)" : "", floor_note);
     }
     return line;
 }
