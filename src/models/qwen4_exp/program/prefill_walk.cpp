@@ -380,6 +380,13 @@ PrefillProgress ProgramImpl::walk_step(Lane& lane, std::uint32_t index, Clock::t
     expert_stream_->end();
     walk_.active   = false;
     host_lanes_[0] = static_cast<std::int32_t>(index);
+    // As advance_prefill: the span that does not stage in the wide prompt mirror returns the loan
+    // here, before the span's after_round and VRAM retarget (its ordering all along); the
+    // mirror-staging span keeps it past prefill_progress's sample and returns at the site below.
+    if (last && !prefilling_besides(index) && !io_wide_view_) {
+        return_stream_lease();
+        return_wide_work();
+    }
     walk_commit_taps(lane);
     prefix_after_prefill_call(lane, index, last);
     if (last && lane.vision) { vision_release(lane); }
@@ -403,10 +410,8 @@ PrefillProgress ProgramImpl::walk_step(Lane& lane, std::uint32_t index, Clock::t
     // staged misses land there anyway: 16 per layer and chunk measured slower than none for every
     // answer length (128K + 512 tokens: 23.16 -> 21.10 s; design §19.3.17).
     PrefillProgress out = prefill_progress(lane, index, begin, width, tokens, last, 0, start);
-    // As advance_prefill: the span's last unit samples through the still-live wide io view, so the
-    // prompt's loan returns only after prefill_progress has run (the mirror it stages positions
-    // through is freed by return_wide_work's wide_io_.clear(); returning before the sample left
-    // host_io() a dangling pointer and segfaulted, #76).
+    // The mirror-staging span's return, after the sample that read the mirror (a no-op when the
+    // loan already went back above; the same bounded throw window as advance_prefill).
     if (last && !prefilling_besides(index)) {
         return_stream_lease();
         return_wide_work();

@@ -1642,6 +1642,16 @@ public:
         next_waits_ = prefix_waits(lane);
         const bool streamed = !walk_.active && stream_chunk(width);
         run(1, width, 1, chunk ? &*chunk : nullptr, stage_vision(lane, static_cast<std::uint32_t>(begin), width), streamed);
+        // The prompt's loan returns when its last unit is enqueued. A unit that does NOT stage in the
+        // wide prompt mirror returns it HERE, before prefill_progress's after_round and VRAM retarget
+        // — the ordering this route has always had (the frames are back before the residency
+        // re-sizes; apply_vram_target's resize no-ops while they are lent). A unit whose io view IS
+        // the mirror must keep the loan past that call, because prefill_progress's sample() stages
+        // its positions through host_io() — the mirror; it returns at the site below (#76).
+        if (last && !prefilling_besides(index) && !io_wide_view_) {
+            return_stream_lease();
+            return_wide_work();
+        }
         lane.state_tokens += static_cast<std::uint32_t>(width);
         prefix_after_prefill_call(lane, index, last);
         // The handoff is read only by the prompt's calls: it returns once the last is enqueued.
@@ -1661,12 +1671,9 @@ public:
         }
         PrefillProgress out =
             prefill_progress(lane, index, begin, width, static_cast<std::uint32_t>(width), last, promotions, start);
-        // The prompt's loan and io view go back only after its last unit has sampled: that unit's
-        // view is the wide mirror itself, and prefill_progress samples through it (host_io). The
-        // loan used to return before prefill_progress; wide_io_.clear() then destroyed the mirror,
-        // host_io() returned the freed pinned allocation and the sample's positions store segfaulted
-        // (the CallIo view outlives the loan; #76). The teardown is safe here: sample's own wait has
-        // already run the wide call's uploads, and give_back is stream-ordered.
+        // The mirror-staging unit's return, after the sample that read the mirror. A no-op when the
+        // loan already went back above (the non-mirror route). A throw between the call and this
+        // site leaves the loan to `release()`: the same bounded window `run()` itself has.
         if (last && !prefilling_besides(index)) {
             return_stream_lease();
             return_wide_work();
