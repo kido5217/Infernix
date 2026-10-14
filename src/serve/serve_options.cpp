@@ -136,8 +136,16 @@ std::string serve_usage_text(const char* argv0) {
            "MODEL & CONTEXT\n"
            "  --max-context N            max context tokens per request (default 8192)\n"
            "  --max-concurrency N        max concurrent sequences, 1-8 (default 1)\n"
-           "  --prefill-chunk N          prefill chunk size in tokens, multiple of 128\n"
-           "                             (default 1024)\n"
+            "  --prefill-chunk N          prefill chunk size in tokens, multiple of 128\n"
+            "                             (default 1024; the fallback and io staging\n"
+            "                             cap under --prefill auto)\n"
+            "  --prefill auto[:N]         Qwen3.8-Flash-Next: resolve every prefill chunk per\n"
+            "                             request as the largest chunk on the 128-token grid\n"
+            "                             (whole prompt-attention waves for the fast-kernel\n"
+            "                             KV formats) the expert cache can lend, capped by\n"
+            "                             the ceiling N (auto:8192, auto:16384, auto:32768;\n"
+            "                             default auto:32768); --prefill-chunk stays the\n"
+            "                             fallback\n"
            "  --use-original-int8-prefill-kernel\n"
            "                             prefill INT8 KV with the original prompt kernel at\n"
            "                             the requested chunk (default: the fast kernel, chunk\n"
@@ -461,6 +469,23 @@ ServeOptions parse_serve_options(int argc, char** argv) {
         } else if (arg == "--prefill-chunk") {
             options.prefill_chunk = static_cast<std::uint32_t>(
                 parse_nonnegative_int(require_value("--prefill-chunk"), "prefill-chunk"));
+        } else if (arg == "--prefill") {
+            // --prefill auto[:N]: per-request lent chunk sizing (design §13). A fixed chunk is
+            // --prefill-chunk; this flag takes only the auto forms (the N grid keeps the ceilings
+            // the qualification campaign covers).
+            const std::string value = require_value("--prefill");
+            if (value == "auto") {
+                options.prefill_auto_ceiling = 32768U;
+            } else if (value.starts_with("auto:")) {
+                const std::string ceiling = value.substr(5);
+                if (ceiling != "8192" && ceiling != "16384" && ceiling != "32768") {
+                    throw std::invalid_argument("--prefill auto:N needs N one of 8192, 16384, 32768");
+                }
+                options.prefill_auto_ceiling = static_cast<std::uint32_t>(std::stoul(ceiling));
+            } else {
+                throw std::invalid_argument("--prefill takes auto or auto:N (N one of 8192, 16384, 32768); "
+                                            "a fixed chunk is --prefill-chunk");
+            }
         } else if (arg == "--use-original-int8-prefill-kernel") {
             options.original_int8_prefill_kernel = true;
         } else if (arg == "--prefill-8bit-pv") {
@@ -805,6 +830,9 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     }
     if (options.prefill_chunk == 0 || options.prefill_chunk % 128 != 0) {
         throw std::invalid_argument("--prefill-chunk must be a positive multiple of 128");
+    }
+    if (options.prefill_auto_ceiling && *options.prefill_auto_ceiling < options.prefill_chunk) {
+        throw std::invalid_argument("--prefill auto[:N] needs N >= --prefill-chunk: the fixed chunk is the fallback");
     }
     if (options.prefill_split_workspace_mib > kMaximumPrefillSplitWorkspaceMiB) {
         throw std::invalid_argument("--prefill-split-workspace-mib must be in [0,16384]");

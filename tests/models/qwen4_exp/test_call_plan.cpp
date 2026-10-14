@@ -87,6 +87,40 @@ int main() {
               "a resume steps by the chunk from its frontier");
         check(q4::plan_calls(9999, 10000, 4096, {}, cost).ends == std::vector<std::uint32_t>{10000}, "a one-token suffix");
 
+        // The equal-chunk tail rule (#73, design §13): min_tail 1024 on the auto route. The tail
+        // 1808 is at least the bound, so the same three calls run in equal widths; a shorter tail
+        // stays the separate short call; cuts rebalance per segment; min_tail 0 (fixed route) is
+        // untouched (checked by the plain-grid lines above).
+        check(q4::plan_calls(0, 10000, 4096, {}, cost, 1024).ends ==
+                  std::vector<std::uint32_t>{3334, 6668, 10000},
+              "a long tail is read as equal chunks of the same call count");
+        check(q4::plan_calls(0, 8704, 4096, {}, cost, 1024).ends == std::vector<std::uint32_t>{4096, 8192, 8704},
+              "a short tail stays the separate short call");
+        check(q4::plan_calls(300, 10000, 4096, {}, cost, 1024).ends ==
+                  std::vector<std::uint32_t>{3534, 6768, 10000},
+              "a resumed segment rebalances from its frontier");
+        {
+            const std::vector<pc::PlannedTap> boundary{exact(2048, true)};
+            const q4::CallPlan split = q4::plan_calls(0, 10000, 4096, boundary, cost, 1024);
+            check(split.ends == std::vector<std::uint32_t>{2048, 6024, 10000},
+                  "each segment between boundary cuts rebalances on its own");
+        }
+        {
+            // Oracle over a sweep: equal widths never change the call count, never exceed the
+            // chunk, and cover the suffix in order; the last call is never wider than the others.
+            bool ok = true;
+            for (std::uint32_t n = 4097; n < 30000; n += 511) {
+                const q4::CallPlan plan = q4::plan_calls(0, n, 4096, {}, cost, 1024);
+                std::uint32_t prev = 0;
+                for (const std::uint32_t end : plan.ends) {
+                    if (end <= prev || end - prev > 4096) { ok = false; }
+                    prev = end;
+                }
+                ok = ok && prev == n && plan.ends.size() == (n + 4095) / 4096;
+            }
+            check(ok, "equal chunking keeps the call count, widths and coverage");
+        }
+
         // The generation opener 5 tokens before the end: one CPU-served call more, kept.
         {
             const pc::PlannedTap taps[] = {exact(9995)};

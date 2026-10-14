@@ -51,6 +51,9 @@ struct ServeOptions {
     std::uint32_t max_pending_requests = 16;
     std::uint32_t pending_timeout_ms   = 30000;
     std::uint32_t prefill_chunk        = 1024;
+    // --prefill auto[:N]: the lent-chunk ceiling of the per-request sizing (nullopt: the fixed
+    // chunk only; the Qwen4Exp route). See docs/serving.md.
+    std::optional<std::uint32_t> prefill_auto_ceiling;
     bool original_int8_prefill_kernel  = false;
     PrefillPv8 prefill_8bit_pv         = PrefillPv8::Auto;
     std::uint32_t prefill_split_workspace_mib = kDefaultPrefillSplitWorkspaceMiB;

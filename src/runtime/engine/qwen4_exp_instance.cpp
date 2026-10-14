@@ -167,6 +167,9 @@ ConstructedQwen4Exp construct_qwen4_exp(const EngineOptions& options, DeviceCont
     program_options.max_context     = options.max_context;
     program_options.max_concurrency = options.max_concurrency;
     program_options.prefill_chunk   = options.prefill_chunk;
+    program_options.prefill_auto    = options.prefill_auto_ceiling;
+    program_options.original_int8_prompt_kernel  = options.original_int8_prefill_kernel;
+    program_options.original_nvfp4_prompt_kernel = options.original_nvfp4_prefill_kernel;
     program_options.kv_cache        = options.kv_cache;
     program_options.diagnostics     = options.diagnostic_observer;
     program_options.kv_capacity_tokens =
@@ -200,6 +203,8 @@ ConstructedQwen4Exp construct_qwen4_exp(const EngineOptions& options, DeviceCont
         program_options.prefix_taps.max_new_taps   = cache.hybrid.max_new_taps.value();
         program_options.prefix_taps.ladder_tokens  = cache.hybrid.tap_ladder_tokens.value();
         program_options.prefix_taps.min_gap_tokens = cache.hybrid.tap_min_gap_tokens.value();
+        program_options.prefix_taps_ladder_defaulted = !cache.hybrid.tap_ladder_explicit;
+        program_options.prefix_taps_gap_defaulted    = !cache.hybrid.tap_min_gap_explicit;
         // Fitted 2026-10-05 (RTX 5090 at PCIe 5.0 x8, INT8 KV; design §19.4): 1.67 s per layer-walk
         // span, 0.16 s per further call, 22 us per token and 1.06 ns per attention pair, within 5 %
         // from 4K to 128K. The span is one pass of the experts over the link: the Program rescales
@@ -248,7 +253,8 @@ ConstructedQwen4Exp construct_qwen4_exp(const EngineOptions& options, DeviceCont
             "Qwen3.8-Flash-Next does not fit in device memory: " + std::to_string(mib(before.device_free)) +
             " MiB free; " + device_contributors(dense, device_plan) + "; reserve " + std::to_string(mib(check.reserve)) +
             "; headroom " + std::to_string(mib(check.headroom)) + " (" + check.describe() +
-            "). Lower --max-context, --max-concurrency or --prefill-chunk, use --kv-dtype int8, lower "
+            "). Lower --max-context, --max-concurrency or --prefill-chunk, cap --prefill auto with a smaller "
+            "ceiling (--prefill auto:8192), use --kv-dtype int8, lower "
             "--vram-headroom-mib, or free VRAM");
     }
     if (check.frames < kFewFrames) {

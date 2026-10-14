@@ -1276,8 +1276,11 @@ an expert **on loan**:
     that exists today and that LIFO reuse of returned frames would make likely.
   - First users: a vision output handoff (2 frames per 1K image tokens) and windows that do not
     fit `work_` in one step. Decided (default, 2026-10-04): vision never borrows the last 25 %.
-  - Not planned yet: KV and prefill-arena loans. The prefix cache takes no frames (§19.3.1); under
+  - Not planned yet: KV loans. The prefix cache takes no frames (§19.3.1); under
     KV loans its Host-backed blocks yield, Free lanes' latest paths and spare COW pages do not.
+    Prefill-arena loans are ported by #73 (`--prefill auto`; §13): the resolved chunk's arena, io
+    staging and streamed ring ride in a per-prompt lease under the same floor, with lazy re-admission
+    and no eager refill-back (the rejection above).
 
 Result: memory that a 256K-capable configuration reserves for KV keeps serving experts until the
 context actually grows into it. In the primary configuration that is 3.8 GB, 1,381 frames, of
@@ -1947,6 +1950,12 @@ process-wide fault seam for the engine test; S3 only past its threshold; S4 park
   resident experts; it is 16K-32K for a solo long prompt. A short tail (< 1K) that moves only its
   own routed experts stays separate. architectds/Strata measured +21-59% at 9K-100K from these two
   rules.
+  *(Status 2026-10-14: both rules are ported by #73 — prefill-arena lending at per-request
+  resolved chunks (`--prefill auto[:N]` on the 128-token / whole-wave grid, priced by the parametric
+  layout terms resolved from the live lendable frames) and the equal-chunk/short-tail segmentation
+  (`call_plan.cpp`, `prefill_sizing::equal_chunk_width`, auto route only). The qualification that
+  §13's measured trade-off becomes a pure gain is #76's. See `prefill_sizing.h` and the
+  `--prefill` entry in [serving](../serving.md).)*
 - **Expert supply.** There are two regimes, with the threshold from calibration (Strata uses 1,024
   tokens; the fork 3,072 with CPU assist):
   - **Streamed walk** (chunk ≥ threshold). Almost every expert is used. While layer l computes,

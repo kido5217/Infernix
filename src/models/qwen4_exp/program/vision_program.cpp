@@ -180,7 +180,7 @@ const execution::VisionInput* ProgramImpl::stage_vision(Lane& lane, std::uint32_
                      std::span<std::int32_t>(words, static_cast<std::size_t>(columns_)));
     if (slice.count == 0) { return nullptr; }
     const std::int32_t out = v.handoff.ne[0];
-    auto* base             = static_cast<std::byte*>(io_device_.p);
+    auto* base             = device_io();
     vision_input_          = {Tensor(static_cast<std::byte*>(v.handoff.data) + 2ULL * out * slice.first, DType::BF16,
                                      {out, static_cast<std::int32_t>(slice.count)}),
                               Tensor(base + io_layout_.vision_columns, DType::I32, {static_cast<std::int32_t>(slice.count)})};
@@ -193,7 +193,7 @@ const execution::VisionInput* ProgramImpl::stage_mtp_vision(Lane& lane, std::uin
     const LaneVision& v    = *lane.vision;
     const std::int32_t out = v.handoff.ne[0];
     auto* words            = reinterpret_cast<std::int32_t*>(host_io() + io_layout_.mtp_vision_columns);
-    auto* base             = static_cast<std::byte*>(io_device_.p);
+    auto* base             = device_io();
     mtp_vision_inputs_.assign(static_cast<std::size_t>(subchunks), execution::VisionInput{});
     for (std::int32_t k = 0; k < subchunks; ++k) {
         // Cell c of sub-chunk k sits at first + 512k + c and takes token first + 512k + c + 1.

@@ -1,5 +1,7 @@
 #include "models/qwen4_exp/program/prefix/call_plan.h"
 
+#include "models/qwen4_exp/program/prefill_sizing.h"
+
 #include <algorithm>
 #include <stdexcept>
 
@@ -14,12 +16,25 @@ double CallCost::call_seconds(std::uint32_t width) const noexcept {
 
 namespace {
 
-// Call ends of [frontier, n) cut at `cuts` (sorted, inside the range).
+// Call ends of [frontier, n) cut at `cuts` (sorted, inside the range). A segment longer than one
+// chunk whose tail is at least `equal_min_tail` tokens (and not the whole segment) is read in
+// equal widths instead of full chunks plus that tail (design §13, #73): the same call count
+// ⌈tokens/chunk⌉, width ⌈tokens/count⌉, the last call taking the remainder; a short tail (or a
+// zero minimum) keeps the plain chunk grid — the separate short-tail rule.
 std::vector<std::uint32_t> segment_ends(std::uint32_t frontier, std::uint32_t n, std::uint32_t chunk,
-                                        std::span<const std::uint32_t> cuts) {
+                                        std::span<const std::uint32_t> cuts, std::uint32_t equal_min_tail) {
     std::vector<std::uint32_t> ends;
     std::uint32_t begin = frontier;
     const auto segment  = [&](std::uint32_t end) {
+        const std::uint32_t equal = prefill_sizing::equal_chunk_width(end - begin, chunk, equal_min_tail);
+        if (equal != 0) {
+            while (end - begin > equal) {
+                begin += equal;
+                ends.push_back(begin);
+            }
+            ends.push_back(end);
+            return;
+        }
         while (begin < end) {
             begin = end - begin > chunk ? begin + chunk : end;
             ends.push_back(begin);
@@ -55,7 +70,8 @@ double seconds_of(std::uint32_t frontier, std::span<const std::uint32_t> ends, c
 } // namespace
 
 CallPlan plan_calls(std::uint32_t frontier, std::uint32_t prompt_tokens, std::uint32_t chunk,
-                    std::span<const pc::PlannedTap> taps, const CallCost& cost) {
+                    std::span<const pc::PlannedTap> taps, const CallCost& cost,
+                    std::uint32_t equal_min_tail) {
     if (chunk == 0 || frontier >= prompt_tokens) {
         throw std::invalid_argument("Qwen4Exp call plan: an empty suffix or a zero chunk");
     }
@@ -71,12 +87,12 @@ CallPlan plan_calls(std::uint32_t frontier, std::uint32_t prompt_tokens, std::ui
     for (const pc::PlannedTap& tap : out.taps) {
         if (tap.placement == pc::TapPlacement::Exact && tap.boundary) { cuts.push_back(tap.position); }
     }
-    double current = seconds_of(frontier, segment_ends(frontier, prompt_tokens, chunk, cuts), cost);
+    double current = seconds_of(frontier, segment_ends(frontier, prompt_tokens, chunk, cuts, equal_min_tail), cost);
     for (pc::PlannedTap& tap : out.taps) {
         if (tap.placement != pc::TapPlacement::Exact || tap.boundary) { continue; }
         std::vector<std::uint32_t> with = cuts;
         with.insert(std::upper_bound(with.begin(), with.end(), tap.position), tap.position);
-        const std::vector<std::uint32_t> ends = segment_ends(frontier, prompt_tokens, chunk, with);
+        const std::vector<std::uint32_t> ends = segment_ends(frontier, prompt_tokens, chunk, with, equal_min_tail);
         const double seconds                 = seconds_of(frontier, ends, cost);
         // Only before a CPU-served call (the generation opener's tail): a split before a GPU-staged call
         // adds that call, and its snapshot (an automatic marker's: the conversation's latest turn) is one
@@ -91,7 +107,7 @@ CallPlan plan_calls(std::uint32_t frontier, std::uint32_t prompt_tokens, std::ui
             tap.placement = pc::TapPlacement::Flexible;
         }
     }
-    out.ends    = segment_ends(frontier, prompt_tokens, chunk, cuts);
+    out.ends    = segment_ends(frontier, prompt_tokens, chunk, cuts, equal_min_tail);
     out.seconds = current;
     return out;
 }

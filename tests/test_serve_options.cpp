@@ -858,6 +858,36 @@ int main() {
     failures += check(serve_usage_text("infernix-serve").find("--use-original-nvfp4-prefill-kernel") !=
                           std::string::npos,
                       "serve help omits --use-original-nvfp4-prefill-kernel");
+    failures += check(!archive.prefill_auto_ceiling.has_value(),
+                      "--prefill auto must default off (the fixed chunk is the default route)");
+    failures += check(parse({"infernix-serve", "model.ninfer", "--prefill", "auto"}).prefill_auto_ceiling ==
+                          std::optional<std::uint32_t>{32768U},
+                      "bare --prefill auto did not take the product ceiling");
+    failures += check(parse({"infernix-serve", "model.ninfer", "--prefill", "auto:8192"}).prefill_auto_ceiling ==
+                          std::optional<std::uint32_t>{8192U},
+                      "--prefill auto:8192 was not preserved");
+    failures += check(parse({"infernix-serve", "model.ninfer", "--prefill", "auto:16384"}).prefill_auto_ceiling ==
+                          std::optional<std::uint32_t>{16384U},
+                      "--prefill auto:16384 was not preserved");
+    {
+        bool bad_ceiling_rejected = false, number_rejected = false, below_fallback_rejected = false;
+        try {
+            parse({"infernix-serve", "model.ninfer", "--prefill", "auto:4096"});
+        } catch (const std::invalid_argument&) { bad_ceiling_rejected = true; }
+        try {
+            parse({"infernix-serve", "model.ninfer", "--prefill", "4096"});
+        } catch (const std::invalid_argument&) { number_rejected = true; }
+        try {
+            parse({"infernix-serve", "model.ninfer", "--prefill", "auto:8192", "--prefill-chunk", "16384"});
+        } catch (const std::invalid_argument&) { below_fallback_rejected = true; }
+        failures += check(bad_ceiling_rejected, "--prefill auto:N outside the 8192/16384/32768 grid was accepted");
+        failures += check(number_rejected, "--prefill with a bare number was accepted (a fixed chunk is --prefill-chunk)");
+        failures += check(below_fallback_rejected,
+                          "an auto ceiling below the fallback chunk was accepted (the fallback must fit)");
+    }
+    failures += check(serve_usage_text("infernix-serve").find("--prefill auto") != std::string::npos &&
+                          serve_usage_text("infernix-serve").find("auto:8192") != std::string::npos,
+                      "serve help omits --prefill auto[:N]");
     failures += check(archive.prefill_8bit_pv == infernix::PrefillPv8::Auto,
                       "8-bit prefill P*V must default to auto");
     failures += check(parse({"infernix-serve", "model.ninfer", "--no-prefill-8bit-pv"}).prefill_8bit_pv ==

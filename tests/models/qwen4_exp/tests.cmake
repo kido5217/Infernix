@@ -68,6 +68,11 @@ infernix_add_test(infernix_qwen4_exp_call_plan_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_call_plan.cpp"
   LIBRARIES infernix_model_runtime)
 
+# The --prefill auto chunk-size model: grid, bisection, loan price (host only; #73 phase 1).
+infernix_add_test(infernix_qwen4_exp_prefill_sizing_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_prefill_sizing.cpp"
+  LIBRARIES infernix_model_runtime)
+
 # RoPE staging of a lane: prompt M-RoPE, later tokens, block starts, MTP sub-chunks (host only).
 infernix_add_test(infernix_qwen4_exp_rope_positions_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_rope_positions.cpp"

@@ -257,6 +257,10 @@ struct HybridPrefixCacheOptions {
     // Ladder taps closer than this to another snapshot on the same path are skipped. Default
     // max(1024, prefill_chunk).
     std::optional<std::uint32_t> tap_min_gap_tokens;
+    // Whether the two tap spacings came from the operator (set during option normalization).
+    // Qwen3.8-Flash-Next `--prefill auto` re-anchors defaulted ladders on the resolved chunk
+    // (design §13); explicit --cache-tap-* values are used as given.
+    bool tap_ladder_explicit = false, tap_min_gap_explicit = false;
     // Opt-in persistence of the Host tier: saved to this file when the Engine shuts down cleanly
     // and restored from it at startup, but only when it was written for the same artifact, KV and
     // state formats and `persistent_identity` (the product binary's build). Empty disables it.
@@ -335,6 +339,12 @@ struct EngineOptions {
     std::uint32_t max_pending_requests = 16;
     std::uint32_t pending_timeout_ms   = 30000;
     std::uint32_t prefill_chunk        = 1024;
+    // Qwen3.8-Flash-Next `--prefill auto[:N]` (design §13): when set (8192, 16384 or 32768), every
+    // prefill resolves its chunk per request as the largest chunk on the sizing grid at or below
+    // this ceiling and at or below max_context whose buffers the expert cache can lend; the fixed
+    // prefill_chunk stays the default, the layout's io staging cap and the fallback when no lease
+    // fits. Other architectures ignore it.
+    std::optional<std::uint32_t> prefill_auto_ceiling;
     // INT8 KV prefills with the fast prompt-attention kernel and rounds prefill_chunk down to whole
     // prompt-attention waves. True selects the original INT8 prompt kernel at the requested chunk;
     // it requires the INT8 KV cache.

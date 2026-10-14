@@ -100,6 +100,7 @@ void ProgramImpl::walk_begin(Lane& lane, std::uint32_t index, std::size_t end) {
         offset += width;
     }
     walk_.io_stride      = walk_align(io_layout_.bytes);
+    walk_.io             = io_layout_; // the span's images: the wide staging's on a lending route
     walk_.residual_bytes = walk_align(2ULL * static_cast<std::size_t>(width_) * static_cast<std::size_t>(offset));
     walk_.layers_per_step =
         static_cast<std::uint32_t>((c_.num_hidden_layers + n - 1) / n); // about one call's work per step
@@ -114,7 +115,7 @@ void ProgramImpl::walk_begin(Lane& lane, std::uint32_t index, std::size_t end) {
     }
     walk_.active = true;
 
-    auto* io        = static_cast<std::byte*>(io_device_.p);
+    auto* io        = device_io();
     auto* area      = walk_area();
     auto* host_area = static_cast<std::byte*>(walk_host_.data());
     // A tensor (or word pointer) into the io image, moved to chunk c's copy.
@@ -145,11 +146,11 @@ void ProgramImpl::walk_begin(Lane& lane, std::uint32_t index, std::size_t end) {
         if (prefetched) {
             const std::size_t rows = static_cast<std::size_t>(w) * hash_.heads() * c_.ple.table.row_bytes;
             const std::size_t tail = io_layout_.ngram + rows;
-            std::memcpy(host_slot, io_host_.data(), io_layout_.ngram);
-            std::memcpy(host_slot + tail, static_cast<const std::byte*>(io_host_.data()) + tail, io_layout_.bytes - tail);
+            std::memcpy(host_slot, host_io(), io_layout_.ngram);
+            std::memcpy(host_slot + tail, host_io() + tail, io_layout_.bytes - tail);
             ++walk_prefetched_chunks_;
         } else {
-            std::memcpy(host_slot, io_host_.data(), io_layout_.bytes);
+            std::memcpy(host_slot, host_io(), io_layout_.bytes);
         }
         CUDA_CHECK(cudaMemcpyAsync(slot, host_slot, io_layout_.bytes, cudaMemcpyHostToDevice, s));
         if (chunk) {
@@ -230,7 +231,7 @@ void ProgramImpl::walk_prefetch_rows(Lane& lane, std::uint32_t index, std::size_
                                            static_cast<std::uint64_t>(width));
         ngram_window(lane.history, static_cast<std::int32_t>(from), static_cast<std::int32_t>(width));
         auto* slot = static_cast<std::byte*>(walk_host_.data()) + k * walk_.io_stride;
-        read_ngram_to(lane, static_cast<std::int32_t>(width), slot + io_layout_.ngram);
+        read_ngram_to(lane, static_cast<std::int32_t>(width), slot + walk_.io.ngram);
         f.begins.push_back(static_cast<std::int32_t>(from));
         f.widths.push_back(static_cast<std::int32_t>(width));
         f.keys.push_back(window_key());
@@ -247,7 +248,7 @@ void ProgramImpl::walk_pass(std::size_t c, std::uint32_t l) {
     auto* area            = walk_area();
     std::byte* slot       = area + walk_.residual_bytes + c * walk_.io_stride;
     const std::int32_t w  = walk_.widths[c];
-    execution::ForwardBatch fb = io_batch(slot, 1, w, 1);
+    execution::ForwardBatch fb = io_batch(slot, walk_.io, 1, w, 1);
     fb.host_slots      = std::span<const std::int32_t>(&walk_.host_slot, 1);
     fb.host_table_rows = fb.host_slots;
     fb.mtp_chunk       = walk_.mtp[c] ? &*walk_.mtp[c] : nullptr;
