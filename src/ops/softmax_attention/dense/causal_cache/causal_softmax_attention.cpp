@@ -35,9 +35,7 @@ constexpr std::int32_t kMaximumBatchSize    = 8;
 constexpr std::int32_t kPromptWaveRows = 128;
 
 void require_causal_geometry(AttentionHeadGeometry geometry, const char* op) {
-    if (!valid_attention_head_geometry(geometry) || geometry.head_dim != kHeadDim ||
-        !((geometry.query_heads == 24 && geometry.kv_heads == 4) ||
-          (geometry.query_heads == 16 && geometry.kv_heads == 2))) {
+    if (!causal_softmax_attention_prompt_wave_supported(geometry)) {
         throw std::invalid_argument(std::string(op) + ": unsupported head geometry");
     }
 }
@@ -265,6 +263,12 @@ void validate_batched_attention_tensors(const Tensor& q, const Tensor& positions
 }
 
 } // namespace
+
+bool causal_softmax_attention_prompt_wave_supported(AttentionHeadGeometry geometry) noexcept {
+    return valid_attention_head_geometry(geometry) && geometry.head_dim == kHeadDim &&
+           ((geometry.query_heads == 24 && geometry.kv_heads == 4) ||
+            (geometry.query_heads == 16 && geometry.kv_heads == 2));
+}
 
 std::int32_t causal_softmax_attention_prompt_wave_tokens(AttentionHeadGeometry geometry) {
     require_causal_geometry(geometry, "causal_softmax_attention prompt wave");

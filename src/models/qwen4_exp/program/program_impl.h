@@ -1642,7 +1642,13 @@ public:
         next_waits_ = prefix_waits(lane);
         const bool streamed = !walk_.active && stream_chunk(width);
         run(1, width, 1, chunk ? &*chunk : nullptr, stage_vision(lane, static_cast<std::uint32_t>(begin), width), streamed);
-        if (last && !prefilling_besides(index)) {
+        // The prompt's loan returns when its last unit is enqueued. A unit that does NOT stage in the
+        // wide prompt mirror returns it HERE, before prefill_progress's after_round and VRAM retarget
+        // — the ordering this route has always had (the frames are back before the residency
+        // re-sizes; apply_vram_target's resize no-ops while they are lent). A unit whose io view IS
+        // the mirror must keep the loan past that call, because prefill_progress's sample() stages
+        // its positions through host_io() — the mirror; it returns at the site below (#76).
+        if (last && !prefilling_besides(index) && !io_wide_view_) {
             return_stream_lease();
             return_wide_work();
         }
@@ -1663,8 +1669,16 @@ public:
             residency_->after_round(device_.stream, width, promotions);
             apply_vram_target(false);
         }
-
-        return prefill_progress(lane, index, begin, width, static_cast<std::uint32_t>(width), last, promotions, start);
+        PrefillProgress out =
+            prefill_progress(lane, index, begin, width, static_cast<std::uint32_t>(width), last, promotions, start);
+        // The mirror-staging unit's return, after the sample that read the mirror. A no-op when the
+        // loan already went back above (the non-mirror route). A throw between the call and this
+        // site leaves the loan to `release()`: the same bounded window `run()` itself has.
+        if (last && !prefilling_besides(index)) {
+            return_stream_lease();
+            return_wide_work();
+        }
+        return out;
     }
 
     // The progress of a prefill unit whose calls were enqueued (the last ends at `begin + width`,
@@ -3039,9 +3053,16 @@ private:
             !(kv == KvCacheStorage::Int8Group64 && options_.original_int8_prompt_kernel) &&
             !(kv == KvCacheStorage::Nvfp4Group16 && options_.original_nvfp4_prompt_kernel);
         if (fast_prompt_kernel) {
-            const auto wave = static_cast<std::uint32_t>(ops::causal_softmax_attention_prompt_wave_tokens(
-                {dim(c_.attention.head_dim), dim(c_.attention.heads), dim(c_.attention.kv_heads)}));
-            if (wave >= step) { step = wave; }
+            const ops::AttentionHeadGeometry geometry{dim(c_.attention.head_dim),
+                                                     dim(c_.attention.heads),
+                                                     dim(c_.attention.kv_heads)};
+            // The wave granule exists only for the geometries the fast prompt kernel implements;
+            // this model's QSA shape keeps the plain 128-token chunk grid.
+            if (ops::causal_softmax_attention_prompt_wave_supported(geometry)) {
+                const auto wave = static_cast<std::uint32_t>(
+                    ops::causal_softmax_attention_prompt_wave_tokens(geometry));
+                if (wave >= step) { step = wave; }
+            }
         }
         auto_grid_   = prefill_sizing::ChunkGrid{.step    = step,
                                                 .ceiling = static_cast<std::uint32_t>(
@@ -3245,7 +3266,16 @@ private:
     class WideWork {
     public:
         WideWork(ProgramImpl& program, std::int32_t columns) : program_(program) {
-            if (columns > program.plan_.static_columns && (program.wide_work_ > 0 || program.auto_ceiling_ != 0)) {
+            // A call whose staging is the wide prompt mirror (auto mode, a lent chunk above the
+            // static cap) runs in the wide region even when this call's own width fits the static
+            // staging: the mirror's upload reads the region the unit staged into. That covers the
+            // prefill unit's trailing begin-round decode (#76: 31 MB H2D into the static buffer
+            // when the region was not entered). Fixed-route and forced-token calls keep the plain
+            // width test.
+            const bool wide_view_call = program.io_wide_view_ &&
+                                        program.prompt_loan_columns_ > program.plan_.static_columns;
+            if ((columns > program.plan_.static_columns || wide_view_call) &&
+                (program.wide_work_ > 0 || program.auto_ceiling_ != 0)) {
                 program.enter_wide(columns);
                 active_ = true;
             }

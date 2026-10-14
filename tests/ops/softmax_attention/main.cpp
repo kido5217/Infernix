@@ -1,3 +1,4 @@
+#include "infernix/ops/softmax_attention.h"
 #include "kv_cache_storage.h"
 #include <iostream>
 #include <optional>
@@ -46,6 +47,23 @@ int main(int argc, char** argv) {
                   << "\nusage: infernix_softmax_attention_test [--causal-only | --non-causal-only] "
                      "[--kv-dtype bf16|int8|fp8|nvfp4|k8v4|all] [--extended] [--wide-only]\n";
         return 2;
+    }
+    // The prompt-wave granule exists only for the head geometries the fast prompt kernel implements
+    // (a pure predicate, no device): the Qwen3.8 QSA 24-query/2-KV-head D256 shape has none, so
+    // `--prefill auto` keeps the plain 128-token chunk grid instead of asking for a wave granule
+    // that would throw at load (#76). Qualified here because the op test is the geometry authority.
+    {
+        using Geometry = infernix::ops::AttentionHeadGeometry;
+        const bool wave_geometry =
+            infernix::ops::causal_softmax_attention_prompt_wave_supported(Geometry{256, 24, 4}) &&
+            infernix::ops::causal_softmax_attention_prompt_wave_supported(Geometry{256, 16, 2}) &&
+            !infernix::ops::causal_softmax_attention_prompt_wave_supported(Geometry{256, 24, 2}) &&
+            !infernix::ops::causal_softmax_attention_prompt_wave_supported(Geometry{256, 24, 1}) &&
+            !infernix::ops::causal_softmax_attention_prompt_wave_supported(Geometry{128, 24, 4});
+        if (!wave_geometry) {
+            std::cerr << "prompt-wave geometry support: FAIL\n";
+            return 1;
+        }
     }
     // --extended runs only the reads beyond the native visible-key ceiling (--rope-yarn-factor).
     if (extended) return run_softmax_attention_extended_tests(storage);
