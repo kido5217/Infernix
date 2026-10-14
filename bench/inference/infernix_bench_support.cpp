@@ -362,6 +362,11 @@ std::string usage_text(std::string_view program) {
         << "  --max-ctx <tokens>          override auto-sized context capacity\n"
         << "  --prefill-chunk <tokens>    multiple of " << kPrefillChunkAlignment
         << " (default: " << kDefaultPrefillChunk << ")\n"
+        << "  --prefill auto[:N]          Qwen3.8-Flash-Next: resolve every prefill chunk per\n"
+        << "                              request from the live expert-cache loan (design §13),\n"
+        << "                              capped by N (auto:8192, auto:16384, auto:32768;\n"
+        << "                              default auto:32768); --prefill-chunk stays the\n"
+        << "                              fallback and the io staging cap\n"
         << "  --kv-dtype <bf16|int8|fp8|nvfp4|k8v4|vq2|k4v2>  KV cache storage (default: bf16)\n"
         << "  --use-original-int8-prefill-kernel  original INT8-KV prompt kernel at the\n"
         << "                              requested chunk (default: fast kernel, wave-aligned\n"
@@ -507,6 +512,22 @@ BenchOptions parse_args(int argc, char** argv) {
             options.max_context = parse_u32(value("--max-ctx"), "max-ctx");
         } else if (arg == "--prefill-chunk") {
             options.prefill_chunk = parse_u32(value("--prefill-chunk"), "prefill-chunk");
+        } else if (arg == "--prefill") {
+            // --prefill auto[:N]: the serve flag's route on the benchmark tool, so the published
+            // chunk table and the lent-chunk route are measured on one harness (design §13).
+            const std::string spec = value("--prefill");
+            if (spec == "auto") {
+                options.prefill_auto_ceiling = 32768U;
+            } else if (spec.starts_with("auto:")) {
+                const std::string ceiling = spec.substr(5);
+                if (ceiling != "8192" && ceiling != "16384" && ceiling != "32768") {
+                    throw std::invalid_argument("--prefill auto:N needs N one of 8192, 16384, 32768");
+                }
+                options.prefill_auto_ceiling = static_cast<std::uint32_t>(std::stoul(ceiling));
+            } else {
+                throw std::invalid_argument("--prefill takes auto or auto:N (N one of 8192, 16384, "
+                                            "32768); a fixed chunk is --prefill-chunk");
+            }
         } else if (arg == "--kv-dtype") {
             options.kv_cache = parse_kv_cache(value("--kv-dtype"));
         } else if (arg == "--use-original-int8-prefill-kernel") {
@@ -794,6 +815,7 @@ std::string format_table(const BenchEnvironment& env, const std::vector<TestResu
         << format_bytes(env.memory.kv_payload_bytes) << '\n'
         << "  corpus:     " << env.corpus_path << " (" << env.corpus_tokens << " tokens)\n"
         << "  config:     max_context=" << env.max_context << " prefill_chunk=" << env.prefill_chunk
+        << " prefill_auto_ceiling=" << (env.prefill_auto_ceiling ? std::to_string(env.prefill_auto_ceiling) : "off")
         << " concurrency=" << env.concurrency << " constraint=" << constraint_name(env.constraint)
         << (env.mixed_constraints ? " (mixed)" : "")
         << " original_int8_prefill_kernel=" << (env.original_int8_prefill_kernel ? "on" : "off")
@@ -935,6 +957,7 @@ std::string format_json(const BenchEnvironment& env, const std::string& command,
         << "    \"max_context\": " << env.max_context << ",\n"
         << "    \"rope_yarn_factor\": " << env.rope_yarn_factor << ",\n"
         << "    \"prefill_chunk\": " << env.prefill_chunk << ",\n"
+        << "    \"prefill_auto_ceiling\": " << env.prefill_auto_ceiling << ",\n"
         << "    \"original_int8_prefill_kernel\": "
         << (env.original_int8_prefill_kernel ? "true" : "false") << ",\n"
         << "    \"prefill_8bit_pv\": \"" << prefill_pv8_name(env.prefill_8bit_pv) << "\""
@@ -1043,7 +1066,7 @@ std::string csv_field(std::string_view value) {
 std::string format_csv(const BenchEnvironment& env, const std::vector<TestResult>& results) {
     std::ostringstream out;
     out << "label,kind,n_prompt,n_gen,architecture,prefill_signature,model_name,artifact_path,max_"
-           "context,prefill_chunk,concurrency,constraint_type,constraint_file,constraint_source,"
+           "context,prefill_chunk,prefill_auto_ceiling,concurrency,constraint_type,constraint_file,constraint_source,"
            "constraint_choices,mixed_constraints,rope_yarn_factor,"
            "speculative_"
            "backend,draft_tokens,ngram_draft_tokens,ngram_min_match,"
@@ -1074,6 +1097,7 @@ std::string format_csv(const BenchEnvironment& env, const std::vector<TestResult
             << result.test.n_prompt << ',' << result.test.n_gen << ',' << env.load.architecture
             << ',' << env.load.prefill_signature << ',' << csv_field(env.load.model_name) << ','
             << csv_field(env.artifact_path) << ',' << env.max_context << ',' << env.prefill_chunk
+            << ',' << env.prefill_auto_ceiling
             << ',' << env.concurrency << ',' << constraint_name(env.constraint) << ','
             << csv_field(env.constraint_file) << ','
             << csv_field(env.constraint ? env.constraint->source : "") << ','

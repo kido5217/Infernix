@@ -195,6 +195,9 @@ int main(int argc, char** argv) {
         engine_options.kv_capacity =
             infernix::KvCapacityPolicy::explicit_capacity(static_cast<std::uint32_t>(kv_capacity));
         engine_options.prefill_chunk                     = options.prefill_chunk;
+        if (options.prefill_auto_ceiling != 0) {
+            engine_options.prefill_auto_ceiling = options.prefill_auto_ceiling;
+        }
         engine_options.original_int8_prefill_kernel      = options.original_int8_prefill_kernel;
         engine_options.kv_cache                          = options.kv_cache;
         engine_options.rope_yarn_factor                  = options.rope_yarn_factor;
@@ -217,6 +220,7 @@ int main(int argc, char** argv) {
         env.max_context              = max_context;
         env.rope_yarn_factor         = options.rope_yarn_factor;
         env.prefill_chunk            = options.prefill_chunk;
+        env.prefill_auto_ceiling     = options.prefill_auto_ceiling;
         env.original_int8_prefill_kernel = options.original_int8_prefill_kernel;
         env.prefill_8bit_pv              = options.prefill_8bit_pv;
         env.prefill_split_workspace_mib  = options.prefill_split_workspace_mib;

@@ -143,6 +143,26 @@ int test_cli_contract() {
     failures += expect(parsed.repetitions == 3 && parsed.warmup == 2, "repetition settings");
     failures += expect(parsed.max_context == std::optional<std::uint32_t>(4096), "max context");
     failures += expect(parsed.prefill_chunk == 128, "prefill chunk");
+    const qb::BenchOptions auto_chunk =
+        parse_for_test({"infernix_bench", "--weights", "model.ninfer", "--prefill-chunk", "1024",
+                        "--prefill", "auto:16384"});
+    failures += expect(auto_chunk.prefill_auto_ceiling == 16384 && auto_chunk.prefill_chunk == 1024,
+                       "auto prefill ceiling with fixed fallback");
+    const qb::BenchOptions auto_default =
+        parse_for_test({"infernix_bench", "--weights", "model.ninfer", "--prefill", "auto"});
+    failures += expect(auto_default.prefill_auto_ceiling == 32768, "bare auto ceiling");
+    failures += expect_throws<std::invalid_argument>(
+        [] {
+            (void)parse_for_test(
+                {"infernix_bench", "--weights", "model.ninfer", "--prefill", "auto:4096"});
+        },
+        "auto ceiling outside the grid");
+    failures += expect_throws<std::invalid_argument>(
+        [] {
+            (void)parse_for_test(
+                {"infernix_bench", "--weights", "model.ninfer", "--prefill", "4096"});
+        },
+        "fixed chunk through --prefill");
     failures += expect(parsed.kv_cache == infernix::KvCacheStorage::Int8Group64, "INT8 KV");
     failures += expect(parsed.speculative.draft_tokens == 5, "MTP window");
     failures += expect(parsed.speculative.proposal_head == infernix::ProposalHead::Optimized,
@@ -424,6 +444,7 @@ qb::BenchEnvironment sample_environment() {
     env.rope_yarn_factor                  = 2.5F;
     env.max_context                       = 4096;
     env.prefill_chunk                     = 1024;
+    env.prefill_auto_ceiling              = 16384;
     env.kv_cache                          = infernix::KvCacheStorage::Int8Group64;
     env.speculative.backend               = infernix::SpeculativeBackend::Mtp;
     env.speculative.draft_tokens          = 5;
@@ -456,7 +477,10 @@ int test_report_contract() {
 
     failures += expect(report.at("config").at("rope_yarn_factor") == 2.5,
                        "report preserves runtime YaRN factor");
-    failures += expect(report.at("schema_version") == 20, "report schema v20");
+    failures += expect(report.at("schema_version") == 21, "report schema v21");
+    failures += expect(report.at("config").at("prefill_chunk") == 1024 &&
+                           report.at("config").at("prefill_auto_ceiling") == 16384,
+                       "report records the lent prefill ceiling beside the fixed fallback");
     failures += expect(report.at("config").at("speculative_backend") == "mtp" &&
                            report.at("config").at("draft_tokens") == 5,
                        "report identifies its backend and window");
