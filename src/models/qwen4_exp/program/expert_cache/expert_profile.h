@@ -36,7 +36,7 @@ struct ExpertProfileLoad {
 // when `loaded` carries no state (missing or refused file), and then records its source, keeping the
 // sidecar's refusal reason. Returns whether the profile became the seed. Callers gate this on the
 // warm start being enabled at all (--expert-state off seeds nothing).
-[[nodiscard]] bool apply_shipped_profile(ExpertStateLoad& loaded, const std::optional<SavedState>& profile);
+bool apply_shipped_profile(ExpertStateLoad& loaded, const std::optional<SavedState>& profile);
 
 // The S4b warm start's source decision, exactly as Program::warm_start_experts applies it: with the
 // warm start enabled (a state file and the expert cache), load the sidecar and fall back to the
