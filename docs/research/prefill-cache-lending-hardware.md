@@ -26,9 +26,24 @@ CSVs and driver scripts are host-local under `/home/kido/trash/temp/opencode/ver
 | fixed 4096 | 1834.6 | 6390.7 | — | 59.61/req | 4 |
 | auto (fallback 4096) | 1820.9 | **6942.8** | **+8.6 %** | 59.63/req | 4 |
 
-Speculative acceptance is 0.6622 in every row, so the prefill gain is not bought from decode
-quality. The resolved chunk in these runs is 12,416 columns — the largest the lease at the
-deployed pool pays for, above every fixed chunk tested.
+Speculative acceptance is identical between each paired fixed and auto row (0.6622 at one lane,
+0.2 at four), so the prefill gain is not bought from decode quality. The resolved chunk in these
+runs is 12,416 columns — the largest the lease at this capacity's free frames pays for, above
+every fixed chunk tested. The matrix runs at `--max-ctx 32768` (0.26 GiB KV pool, 8,755
+expert-cache frames). At the **deployed capacity** (`--max-ctx 1048576`, YaRN ×4, four lanes,
+4,096-token fallback, 8,442 frames) the same pair gives:
+
+| config | pp4096 | pp16384 | pp16384 vs fixed-4096 | tg512 |
+|---|---:|---:|---:|---:|
+| fixed 4096 | 1823.7 | 6099.7 | — | 55.90/req |
+| auto (fallback 4096, auto:32768) | 1798.7 | **6691.9** | **+9.7 %** | 55.70/req (−0.4 %) |
+
+The prefill win and the absent decode cost therefore hold at the deployed window and lane count.
+`workspace_peak_bytes` (910,470,656) and `kv_payload_bytes` (301,989,888) are identical in the
+fixed and auto runs at that capacity: the loan is taken on top of the fixed allocation, not
+instead of it. The resolved chunk does depend on the free frames at the configured capacity — the
+same pair is +8.6 % at the 32K configuration and +9.7 % at the deployed one — so the matrix is not
+transferable between capacity configurations; its direction is.
 
 Against the product default (fixed 1024) the auto route is **+70 %** at pp16384 (6749 vs 3977),
 +0.6 % at pp4096 and −1.9 % at tg512; against the best fixed chunk (4096) it is **+5.4 %** at
