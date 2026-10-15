@@ -1964,7 +1964,8 @@ process-wide fault seam for the engine test; S3 only past its threshold; S4 park
   Status 2026-10-15: qualified on the deployed artifact by ticket #76. The runs found and PRs #83
   and #84 fixed four runtime defects: prompt-wave geometry at load, the wide-region staging of a
   lent unit's trailing call, the pinned mirror's lifetime, and the forced-token staging. Measured
-  against the product default (fixed 1024) the auto route is +70 % at pp16384 (6749 vs 3977 tok/s),
+  at `--max-ctx 32768`, against the product default (fixed 1024) the auto route is +70 % at
+  pp16384 (6749 vs 3977 tok/s),
   +0.6 % at pp4096 and −1.9 % at tg512; against the best fixed chunk (4096) it is +5.4 % at
   pp16384, +8.6 % at four lanes and −2.4 % / −0.0 % at tg512; on an 18,000-token prompt, where the
   fixed grid pays a short tail, the equal-chunk rule is +24.3 % (6982 vs 5617). While a long prompt
