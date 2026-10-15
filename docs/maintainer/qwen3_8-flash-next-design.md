@@ -7986,6 +7986,13 @@ end-to-end effect is not measured yet.
   - the stream lease (after the ring);
   - a frame lease of its own;
   - a `DeviceBuffer` fallback.
+- A unit enters its arena **before** it stages the call's io image: the staging bakes device pointers
+  out of what is staged (`stage_mtp_chunk`'s cells, images and rope into the `MtpChunk` the forward
+  reads, a vision call's column list), and with `--prefill auto` the staged view is the wide mirror,
+  whose offsets are the wide layout's. Staged against the static image those pointers name memory
+  well past that image ($\approx$ 31 MB past 2.7 MB at a 12K-column loan: `cudaErrorIllegalAddress`
+  in the drafter's embedding, #76). A layer walk rebases each chunk's pointers onto its lease slot
+  instead (`prefill_walk.cpp`).
 - A temporary toggle (`INFERNIX_TMP_WIDE_WORK_OFF`, removed before the commit) restored the static
   arena for the A/B.
 

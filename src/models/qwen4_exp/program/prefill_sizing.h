@@ -106,6 +106,20 @@ constexpr std::int32_t wide_staging_columns(std::uint32_t lane_chunk, std::int32
     return lane_chunk > static_cap ? static_cast<std::int32_t>(lane_chunk) : 0;
 }
 
+// Whether a call of `columns` columns must run in the wide region: its own width above the static
+// arena, or a staging view that IS the wide mirror (auto mode, a lent chunk above the static cap) —
+// the mirror's offsets are the wide layout's, so the unit runs in the region even when its call is
+// narrow. A unit's staging makes this same decision before it captures any device pointer into the
+// io image (stage_mtp_chunk's cells, images and rope, a vision call's columns), so those pointers
+// name the region the call runs in rather than the static image the view replaced (a lent unit's
+// first call staged at the static base + the wide offsets: 31 MB past that image's end, #76).
+// `region_available` is the plan's wide arena, or any auto-mode plan (without either there is no
+// region to enter).
+constexpr bool wide_region_call(bool region_available, std::int32_t columns, std::int32_t static_columns,
+                                bool wide_io_view, std::int32_t loan_columns) noexcept {
+    return region_available && (columns > static_columns || (wide_io_view && loan_columns > static_columns));
+}
+
 // The wide staging mirror's growth decision when a prompt needs `needed` columns and a mirror of
 // `held` columns stands (a prompt of a larger resolved chunk than the last lender's, or a second
 // prefilling lane): reuse it, replace it, or defer — a running layer walk's chunk slots hold the

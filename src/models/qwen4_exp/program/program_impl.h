@@ -1628,20 +1628,30 @@ public:
         // design §19.3.17). Their routes still count toward the cache's scores.
         const std::size_t promotions =
             width <= kServedCallColumns ? decode_budget(static_cast<std::uint32_t>(width)) : 0;
-        // Host phases of a chunk for nsys attribution (the GPU side is in the CUDA trace).
-        const nvtx::ScopedRange chunk_range(nvtx::Name::PrefillChunk, nvtx::Category::Prefill,
-                                            static_cast<std::uint64_t>(width));
-        {
-            const nvtx::ScopedRange rows_range(nvtx::Name::PrefillPleRows, nvtx::Category::Prefill,
-                                               static_cast<std::uint64_t>(width));
-            stage_sequence(index, begin, width, lane.history);
-        }
-        const auto chunk = stage_mtp_chunk(lane, index, begin, width);
-        // A resumed lane's first call waits per layer for its restore; any call waits per layer for
-        // a copy-out of this lane's state still in flight (design §19.3.1).
-        next_waits_ = prefix_waits(lane);
+        // The unit's region (and the stream lease it rides) is entered BEFORE any staging: the unit
+        // stages into the wide prompt mirror, whose device offsets are the wide layout's, so every
+        // device pointer the staging captures — the MTP chunk's cells, images and rope, a vision
+        // call's columns — must name the region this call runs in, never the static image the view
+        // replaced: a lent unit's first call staged against the static image, 31 MB past its end
+        // (#76; a walk's chunks rebase onto their slots instead).
         const bool streamed = !walk_.active && stream_chunk(width);
-        run(1, width, 1, chunk ? &*chunk : nullptr, stage_vision(lane, static_cast<std::uint32_t>(begin), width), streamed);
+        {
+            const WideWork wide(*this, width);
+            // Host phases of a chunk for nsys attribution (the GPU side is in the CUDA trace).
+            const nvtx::ScopedRange chunk_range(nvtx::Name::PrefillChunk, nvtx::Category::Prefill,
+                                                static_cast<std::uint64_t>(width));
+            {
+                const nvtx::ScopedRange rows_range(nvtx::Name::PrefillPleRows, nvtx::Category::Prefill,
+                                                   static_cast<std::uint64_t>(width));
+                stage_sequence(index, begin, width, lane.history);
+            }
+            const auto chunk = stage_mtp_chunk(lane, index, begin, width);
+            // A resumed lane's first call waits per layer for its restore; any call waits per layer
+            // for a copy-out of this lane's state still in flight (design §19.3.1).
+            next_waits_ = prefix_waits(lane);
+            run(1, width, 1, chunk ? &*chunk : nullptr,
+                stage_vision(lane, static_cast<std::uint32_t>(begin), width), streamed);
+        }
         // The prompt's loan returns when its last unit is enqueued. A unit that does NOT stage in the
         // wide prompt mirror returns it HERE, before prefill_progress's after_round and VRAM retarget
         // — the ordering this route has always had (the frames are back before the residency
@@ -1897,9 +1907,15 @@ public:
             }
             const auto begin = static_cast<std::int32_t>(lane.state_tokens);
             const CallIo io(*this, lane, static_cast<std::int32_t>(stride));
-            stage_sequence(index, begin, static_cast<std::int32_t>(stride), lane.history);
-            const auto chunk = stage_mtp_chunk(lane, index, begin, static_cast<std::int32_t>(stride));
-            run(1, static_cast<std::int32_t>(stride), 1, chunk ? &*chunk : nullptr);
+            // As in advance_prefill: a forced unit whose view is wide (its stride above the static
+            // cap) enters its region before it stages, so the MTP chunk it captures names the
+            // region its call runs in.
+            {
+                const WideWork wide(*this, static_cast<std::int32_t>(stride));
+                stage_sequence(index, begin, static_cast<std::int32_t>(stride), lane.history);
+                const auto chunk = stage_mtp_chunk(lane, index, begin, static_cast<std::int32_t>(stride));
+                run(1, static_cast<std::int32_t>(stride), 1, chunk ? &*chunk : nullptr);
+            }
             device_.synchronize();
             check_expert_error();
             trace_round(RouteTraceKind::ForcedTokens, 1, static_cast<std::int32_t>(stride), stride,
@@ -3266,16 +3282,19 @@ private:
     class WideWork {
     public:
         WideWork(ProgramImpl& program, std::int32_t columns) : program_(program) {
+            // A unit that already holds the region keeps it: the unit's staging enters it before
+            // `run` so the device pointers the staging captures name the region (see
+            // advance_prefill). Only the outermost WideWork enters and leaves.
+            if (program.wide_active_) { return; }
             // A call whose staging is the wide prompt mirror (auto mode, a lent chunk above the
             // static cap) runs in the wide region even when this call's own width fits the static
             // staging: the mirror's upload reads the region the unit staged into. That covers the
             // prefill unit's trailing begin-round decode (#76: 31 MB H2D into the static buffer
             // when the region was not entered). Fixed-route and forced-token calls keep the plain
             // width test.
-            const bool wide_view_call = program.io_wide_view_ &&
-                                        program.prompt_loan_columns_ > program.plan_.static_columns;
-            if ((columns > program.plan_.static_columns || wide_view_call) &&
-                (program.wide_work_ > 0 || program.auto_ceiling_ != 0)) {
+            if (prefill_sizing::wide_region_call(program.wide_work_ > 0 || program.auto_ceiling_ != 0, columns,
+                                                 program.plan_.static_columns, program.io_wide_view_,
+                                                 program.prompt_loan_columns_)) {
                 program.enter_wide(columns);
                 active_ = true;
             }

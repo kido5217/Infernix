@@ -225,6 +225,17 @@ void test_wide_staging_and_grow() {
     check(ps::io_grow_decision(true, 1024, 8064, false) == ps::IoGrow::Replace, "a growing need replaces it");
     check(ps::io_grow_decision(true, 1024, 8064, true) == ps::IoGrow::Transient,
           "a walk holding the stride defers the growth to a per-unit mirror");
+    // The region decision the staging and the call share (#76): a unit whose view is the wide mirror
+    // enters the region even when its own call is narrow, because the device pointers the staging
+    // captures into the io image are the wide layout's — staged against the static image they name
+    // memory 31 MB past its end. A view that is not wide, a view whose loan does not exceed the
+    // static cap, and a plan without a region all keep the static staging. (The ordering — the
+    // staging runs after the entry — is advance_prefill's and stays hardware-qualified.)
+    check(ps::wide_region_call(true, 53, 512, true, 12032), "a narrow call in a lent unit enters the region");
+    check(ps::wide_region_call(true, 6581, 512, false, 0), "a call above the static arena enters the region");
+    check(!ps::wide_region_call(true, 53, 512, false, 0), "a narrow static-route call stages statically");
+    check(!ps::wide_region_call(true, 53, 512, true, 512), "a view that does not widen past the cap stays static");
+    check(!ps::wide_region_call(false, 6581, 512, true, 12032), "no wide arena and no auto route: no region");
 }
 
 void test_equal_chunks() {
