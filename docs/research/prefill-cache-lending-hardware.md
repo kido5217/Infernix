@@ -31,8 +31,8 @@ quality. The resolved chunk in these runs is 12,416 columns — the largest the 
 deployed pool pays for, above every fixed chunk tested.
 
 Against the product default (fixed 1024) the auto route is **+70 %** at pp16384 (6749 vs 3977),
-+0.6 % at pp4096 and −2.3 % at tg512; against the best fixed chunk (4096) it is **+5.4 %** at
-pp16384, +8.6 % at four lanes, and −2.3 % / −0.0 % at tg512. The design's Strata-sourced band
++0.6 % at pp4096 and −1.9 % at tg512; against the best fixed chunk (4096) it is **+5.4 %** at
+pp16384, +8.6 % at four lanes, and −2.4 % / −0.0 % at tg512. The design's Strata-sourced band
 (+21–59 % at 9–100 K) is a comparison against the old default; at 16 K that comparison measures
 +70 %.
 
@@ -74,16 +74,19 @@ repeat requests return from the hybrid snapshot.
 Fresh 13,179-token prompt (a nonce defeats the prefix cache, so its chunks really run) plus three
 concurrent 256-token decodes started 1.5 s later:
 
-| config | long prompt | side decodes, per request | aggregate |
-|---|---|---|---|
-| auto (fallback 1024, auto:32768) | 5.91k t/s, TTFT 3.2 s, 3.6 s | 34.3 / 34.0 / 33.7 t/s | 101.1 t/s |
-| fixed 1024 (the same fallback chunk) | 4.63k t/s, TTFT 4.0 s, 4.4 s | 28.6 / 28.3 / 28.1 t/s | 84.4 t/s |
-| fixed 4096 | 5.85k t/s, TTFT 3.4 s, 3.8 s | 31.2 / 31.8 / 31.5 t/s | 93.7 t/s |
+| config | long prompt | side decode rate | end-to-end per request | aggregate |
+|---|---|---|---|---|
+| auto (fallback 1024, auto:32768) | 5.91k t/s, TTFT 3.2 s, 3.6 s | 64.0 / 63.4 / 63.3 t/s | 34.3 / 34.0 / 33.7 t/s | 101.1 t/s |
+| fixed 1024 (the same fallback chunk) | 4.63k t/s, TTFT 4.0 s, 4.4 s | 64.8 / 64.3 / 64.5 t/s | 28.6 / 28.3 / 28.1 t/s | 84.4 t/s |
+| fixed 4096 | 5.85k t/s, TTFT 3.4 s, 3.8 s | 60.4 / 60.0 / 60.1 t/s | 31.2 / 31.8 / 31.5 t/s | 93.7 t/s |
 
-Borrowing frames costs the decoding lanes nothing measurable: the side lanes run 19 % faster than
-under the matching fallback-chunk baseline and 8 % faster than under fixed 4096, and the long
-prompt finishes sooner in both pairs (its shorter occupancy is part of the side lanes' gain). No
-decode regression from the loan at this concurrency.
+Borrowing frames costs the decoding lanes nothing measurable in their own rate: while the long
+prompt prefills, their decode rate is 64.0 / 63.4 / 63.3 tok/s against 64.8 / 64.3 / 64.5 at the
+matching fallback chunk (−1.5 %) and 60.4 / 60.0 / 60.1 at fixed 4096 (+5.6 %). Their end-to-end
+throughput is higher than both baselines (34.0 vs 28.3 and 31.5 tok/s per 123-token request)
+because the long prompt's chunks finish sooner (3.6 s vs 4.4 s and 3.8 s) and free the round
+earlier — an occupancy effect, not a decode-rate effect. No decode regression from the loan at
+this concurrency.
 
 A first attempt at this item reused the item-3 prompt, which the prefix cache served in 0.1 s, so
 nothing prefilled while the lanes decoded and the numbers measured nothing; the fresh-prompt rerun
