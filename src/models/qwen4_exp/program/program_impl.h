@@ -1635,11 +1635,13 @@ public:
         // replaced: a lent unit's first call staged against the static image, 31 MB past its end
         // (#76; a walk's chunks rebase onto their slots instead).
         const bool streamed = !walk_.active && stream_chunk(width);
+        // Host phases of a chunk for nsys attribution (the GPU side is in the CUDA trace). This
+        // range keeps its pre-region scope: it covers staging, the call, and the non-last sync,
+        // residency work and prefill_progress that follow.
+        const nvtx::ScopedRange chunk_range(nvtx::Name::PrefillChunk, nvtx::Category::Prefill,
+                                            static_cast<std::uint64_t>(width));
         {
             const WideWork wide(*this, width);
-            // Host phases of a chunk for nsys attribution (the GPU side is in the CUDA trace).
-            const nvtx::ScopedRange chunk_range(nvtx::Name::PrefillChunk, nvtx::Category::Prefill,
-                                                static_cast<std::uint64_t>(width));
             {
                 const nvtx::ScopedRange rows_range(nvtx::Name::PrefillPleRows, nvtx::Category::Prefill,
                                                    static_cast<std::uint64_t>(width));
