@@ -1959,9 +1959,21 @@ process-wide fault seam for the engine test; S3 only past its threshold; S4 park
   *(Status 2026-10-14: both rules are ported by #73 — prefill-arena lending at per-request
   resolved chunks (`--prefill auto[:N]` on the 128-token / whole-wave grid, priced by the parametric
   layout terms resolved from the live lendable frames) and the equal-chunk/short-tail segmentation
-  (`call_plan.cpp`, `prefill_sizing::equal_chunk_width`, auto route only). The qualification that
-  §13's measured trade-off becomes a pure gain is #76's. See `prefill_sizing.h` and the
-  `--prefill` entry in [serving](../serving.md).)*
+  (`call_plan.cpp`, `prefill_sizing::equal_chunk_width`, auto route only). See `prefill_sizing.h`
+  and the `--prefill` entry in [serving](../serving.md).
+  Status 2026-10-15: qualified on the deployed artifact by ticket #76. The runs found and PRs #83
+  and #84 fixed four runtime defects: prompt-wave geometry at load, the wide-region staging of a
+  lent unit's trailing call, the pinned mirror's lifetime, and the forced-token staging. Measured
+  against the product default (fixed 1024) the auto route is +70 % at pp16384 (6749 vs 3977 tok/s),
+  +0.6 % at pp4096 and −2.3 % at tg512; against the best fixed chunk (4096) it is +5.4 % at
+  pp16384, +8.6 % at four lanes and −2.3 % / −0.0 % at tg512; on an 18,000-token prompt, where the
+  fixed grid pays a short tail, the equal-chunk rule is +24.3 % (6982 vs 5617). The lent route
+  costs the decoding lanes nothing measurable while a long prompt prefills (side lanes 19 % faster
+  than at the matching fallback chunk, 8 % faster than at fixed 4096). Greedy output at matching
+  chunk sizes is byte-identical and prefix reuse works at per-request chunks (99.9 % on a repeat).
+  §19's published *fixed*-chunk trade-off (~4.6 % tg512 for 4096 against 1024) does not reproduce
+  on this build (−0.1 %). Record: ticket #76 and
+  `docs/research/prefill-cache-lending-hardware.md` on `research/prefill-cache-lending-hardware`.)*
 - **Expert supply.** There are two regimes, with the threshold from calibration (Strata uses 1,024
   tokens; the fork 3,072 with CPU assist):
   - **Streamed walk** (chunk ≥ threshold). Almost every expert is used. While layer l computes,
