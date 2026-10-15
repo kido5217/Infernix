@@ -1971,7 +1971,10 @@ process-wide fault seam for the engine test; S3 only past its threshold; S4 park
   prefills, the decoding lanes' own rate is unchanged (63.6 tok/s against 64.5 at the matching
   fallback chunk and 60.2 at fixed 4096) and their requests finish sooner because the prompt's
   chunks do (3.6 s against 4.4 s). Greedy output at matching chunk sizes is byte-identical and
-  prefix reuse works at per-request chunks (99.9 % on a repeat). §19's published *fixed*-chunk
+  prefix reuse works at per-request chunks (99.9 % on a repeat). At the deployed 1 M window with
+  four lanes the same pp16384 pair is +9.7 % (6692 vs 6100) with tg512 −0.4 %, and the fixed
+  allocation is untouched (`workspace_peak_bytes` and `kv_payload_bytes` identical to the fixed
+  run). §19's published *fixed*-chunk
   trade-off (~4.6 % tg512 for 4096 against 1024) does not reproduce on this build (−0.1 %).
   Record: ticket #76 and `docs/research/prefill-cache-lending-hardware.md` on
   `research/prefill-cache-lending-hardware`.)*
